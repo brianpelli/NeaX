@@ -18,6 +18,8 @@ type Resultado = {
   } | null;
 };
 
+type Resumen = { total: number; avg_overall: number };
+
 const GRUPOS: Record<string, string> = {
   oficios: "Oficios",
   profesiones: "Profesiones",
@@ -30,6 +32,7 @@ export default function BuscarPage() {
   const [categoryId, setCategoryId] = useState("");
   const [city, setCity] = useState("");
   const [results, setResults] = useState<Resultado[]>([]);
+  const [ratings, setRatings] = useState<Record<string, Resumen>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,7 +51,9 @@ export default function BuscarPage() {
       setLoading(true);
       setError(null);
 
-      let query = createClient()
+      const supabase = createClient();
+
+      let query = supabase
         .from("professionals")
         .select(
           "id, headline, is_verified, categories(name), profiles!inner(full_name, province, city)"
@@ -59,14 +64,34 @@ export default function BuscarPage() {
       if (categoryId) query = query.eq("category_id", Number(categoryId));
       if (city.trim()) query = query.ilike("profiles.city", `%${city.trim()}%`);
 
-      const { data, error } = await query;
+      const { data, error: searchError } = await query;
       if (cancelled) return;
 
-      if (error) {
-        setError(error.message);
-      } else {
-        setResults((data ?? []) as unknown as Resultado[]);
+      if (searchError) {
+        setError(searchError.message);
+        setLoading(false);
+        return;
       }
+
+      const rows = (data ?? []) as unknown as Resultado[];
+      setResults(rows);
+
+      if (rows.length > 0) {
+        const { data: rat } = await supabase
+          .from("professional_ratings")
+          .select("professional_id, total, avg_overall")
+          .in(
+            "professional_id",
+            rows.map((r) => r.id)
+          );
+        if (cancelled) return;
+        setRatings(
+          Object.fromEntries(
+            (rat ?? []).map((x) => [x.professional_id, x as Resumen])
+          )
+        );
+      }
+
       setLoading(false);
     }
 
@@ -135,6 +160,13 @@ export default function BuscarPage() {
           <span className="text-sm text-[#55666a]">
             {[r.profiles?.city, r.profiles?.province].filter(Boolean).join(", ")}
           </span>
+          {ratings[r.id] && (
+            <span className="text-sm">
+              <span className="text-[#e9a23b]">★</span>{" "}
+              {Number(ratings[r.id].avg_overall).toFixed(1).replace(".", ",")} (
+              {ratings[r.id].total})
+            </span>
+          )}
           {r.is_verified && (
             <span className="mt-1 w-fit rounded-lg bg-[#dff0ec] px-2 py-0.5 text-sm font-medium text-[#0b4a4a]">
               Verificado
