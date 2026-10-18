@@ -29,6 +29,7 @@ export default function OfrecerPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [myId, setMyId] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -63,6 +64,7 @@ export default function OfrecerPage() {
         .eq("user_id", user.id)
         .maybeSingle();
       if (pro) {
+		setMyId(pro.id);
         setCategoryId(String(pro.category_id ?? ""));
         setHeadline(pro.headline ?? "");
         setDescription(pro.description ?? "");
@@ -90,6 +92,7 @@ export default function OfrecerPage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
+	setMyId(professionalId);
     setSaved(false);
     setSaving(true);
 
@@ -134,7 +137,11 @@ export default function OfrecerPage() {
 
     const { error: contactError } = await supabase
       .from("professional_contacts")
-      .upsert({ professional_id: professionalId, phone, whatsapp });
+      .      .upsert({
+        professional_id: professionalId,
+        phone,
+        whatsapp: whatsapp.replace(/\D/g, ""),
+      });
     if (contactError) return fail(contactError.message);
 
     setSaving(false);
@@ -242,10 +249,17 @@ export default function OfrecerPage() {
           WhatsApp
           <input
             type="tel"
+            inputMode="numeric"
+            pattern="[0-9 +()-]{10,20}"
+            title="Escribí el número completo con código de país y de área"
             className={inputClass}
             value={whatsapp}
             onChange={(e) => setWhatsapp(e.target.value)}
           />
+          <span className="text-xs font-normal text-[#55666a]">
+            Con código de país y de área, sin 0 ni 15. Ejemplo para Argentina:
+            5491123456789
+          </span>
         </label>
 
         {error && <p className="text-sm text-red-700">{error}</p>}
@@ -267,6 +281,14 @@ export default function OfrecerPage() {
         href="/certificados"
         className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
       >
+	  {myId && (
+        <Link
+          href={`/profesional/${myId}`}
+          className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+        >
+          Ver mi perfil público
+        </Link>
+      )}
         Subir certificados y estudios
       </Link>
       <Link href="/" className="text-sm font-bold text-[#0f5c5c] underline">
