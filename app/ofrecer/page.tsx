@@ -92,7 +92,6 @@ export default function OfrecerPage() {
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-	setMyId(professionalId);
     setSaved(false);
     setSaving(true);
 
@@ -137,13 +136,14 @@ export default function OfrecerPage() {
 
     const { error: contactError } = await supabase
       .from("professional_contacts")
-      .      .upsert({
+      .upsert({
         professional_id: professionalId,
         phone,
         whatsapp: whatsapp.replace(/\D/g, ""),
       });
     if (contactError) return fail(contactError.message);
 
+    setMyId(professionalId);
     setSaving(false);
     setSaved(true);
   }
