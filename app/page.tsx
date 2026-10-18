@@ -1,3 +1,4 @@
+import Link from "next/link";
 import AuthStatus from "@/components/AuthStatus";
 
 export default function Home() {
@@ -7,6 +8,12 @@ export default function Home() {
       <p className="text-[#55666a]">
         Encontrá profesionales y oficios de confianza.
       </p>
+      <Link
+        href="/buscar"
+        className="flex h-12 items-center justify-center rounded-2xl bg-[#0f5c5c] font-bold text-white"
+      >
+        Buscar profesionales
+      </Link>
       <AuthStatus />
     </main>
   );
