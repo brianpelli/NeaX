@@ -277,10 +277,6 @@ export default function OfrecerPage() {
           {saving ? "Guardando..." : "Guardar perfil"}
         </button>
       </form>
-      <Link
-        href="/certificados"
-        className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
-      >
       {myId && (
         <Link
           href={`/profesional/${myId}`}
