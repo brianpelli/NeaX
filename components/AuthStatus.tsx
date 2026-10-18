@@ -28,11 +28,17 @@ export default function AuthStatus() {
 
   if (!ready) return null;
 
-  if (user) {
+    if (user) {
     const name = user.user_metadata?.full_name ?? user.email;
     return (
       <div className="flex flex-col gap-3">
         <p className="text-lg">Hola, {name}</p>
+        <Link
+          href="/ofrecer"
+          className="flex h-12 items-center justify-center rounded-2xl bg-[#0f5c5c] font-bold text-white"
+        >
+          Ofrecer mis servicios
+        </Link>
         <button
           onClick={() => createClient().auth.signOut()}
           className="h-12 rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
