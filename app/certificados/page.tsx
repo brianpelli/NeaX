@@ -180,23 +180,31 @@ export default function CertificadosPage() {
             required
           />
         </label>
-        <label className="flex flex-col gap-1.5 text-sm font-medium">
-          Archivo
+          <div className="flex flex-col gap-2">
+          <span className="text-sm font-medium">Archivo</span>
           <input
+            id="archivo"
             key={fileKey}
             type="file"
             accept="application/pdf,image/jpeg,image/png,image/webp"
+            className="sr-only"
             onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-            required
           />
-        </label>
+          <label
+            htmlFor="archivo"
+            className="flex h-12 cursor-pointer items-center justify-center rounded-xl border border-[#0f5c5c] bg-white font-bold text-[#0f5c5c]"
+          >
+            {file ? "Cambiar archivo" : "Elegir archivo"}
+          </label>
+          {file && <p className="text-sm text-[#55666a]">{file.name}</p>}
+        </div>
 
         {error && <p className="text-sm text-red-700">{error}</p>}
 
         <button
           type="submit"
-          disabled={saving}
-          className="h-13 rounded-2xl bg-[#0f5c5c] text-lg font-bold text-white disabled:opacity-60"
+          disabled={saving || !file}
+          className="h-13 rounded-2xl bg-[#0f5c5c] text-lg font-bold text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
           {saving ? "Subiendo..." : "Subir documento"}
         </button>
