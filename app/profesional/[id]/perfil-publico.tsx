@@ -43,6 +43,14 @@ function fmt(n: number) {
   return Number(n).toFixed(1).replace(".", ",");
 }
 
+const MOTIVOS: Record<string, string> = {
+  perfil_falso: "Perfil falso o datos inventados",
+  suplantacion: "Suplanta a otra persona",
+  estafa: "Intento de estafa o cobro indebido",
+  contenido_inapropiado: "Contenido inapropiado u ofensivo",
+  otro: "Otro motivo",
+};
+
 function Barra({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-3 text-[15px]">
@@ -107,6 +115,13 @@ export default function PerfilPublicoPage() {
   const [reviewed, setReviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
+
+  const [reported, setReported] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [reason, setReason] = useState("perfil_falso");
+  const [details, setDetails] = useState("");
+  const [reportSending, setReportSending] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
 
   const [price, setPrice] = useState(0);
   const [reliability, setReliability] = useState(0);
@@ -183,6 +198,14 @@ export default function PerfilPublicoPage() {
           .eq("client_id", user.id)
           .maybeSingle();
         setReviewed(!!mine);
+
+        const { data: myReport } = await supabase
+          .from("reports")
+          .select("id")
+          .eq("professional_id", id)
+          .eq("reporter_id", user.id)
+          .maybeSingle();
+        setReported(!!myReport);
       }
       setLoading(false);
     }
@@ -233,6 +256,29 @@ export default function PerfilPublicoPage() {
     setReliability(0);
     setQuality(0);
     setComment("");
+    setVersion((v) => v + 1);
+  }
+
+  async function handleReport(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!userId) return;
+    setReportError(null);
+    setReportSending(true);
+    const { error: insertError } = await createClient()
+      .from("reports")
+      .insert({
+        reporter_id: userId,
+        professional_id: id,
+        reason,
+        details: details.trim() || null,
+      });
+    setReportSending(false);
+    if (insertError) {
+      setReportError(insertError.message);
+      return;
+    }
+    setShowReport(false);
+    setDetails("");
     setVersion((v) => v + 1);
   }
 
@@ -464,6 +510,66 @@ export default function PerfilPublicoPage() {
           </a>
         )}
       </div>
+
+      {loggedIn && !isOwner && (
+        <div className="flex flex-col gap-3">
+          {reported ? (
+            <p className="text-sm text-[#55666a]">
+              Ya denunciaste este perfil. Lo vamos a revisar.
+            </p>
+          ) : !showReport ? (
+            <button
+              onClick={() => setShowReport(true)}
+              className="w-fit text-sm font-bold text-red-700 underline"
+            >
+              Denunciar este perfil
+            </button>
+          ) : (
+            <form onSubmit={handleReport} className={cardClass}>
+              <h2 className="font-bold">Denunciar este perfil</h2>
+              <select
+                aria-label="Motivo"
+                className="h-12 rounded-xl border border-[#b9c7c7] bg-white px-4 text-base"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              >
+                {Object.entries(MOTIVOS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <textarea
+                aria-label="Detalles"
+                className="h-24 rounded-xl border border-[#b9c7c7] bg-white px-4 py-3 text-base"
+                maxLength={500}
+                value={details}
+                onChange={(e) => setDetails(e.target.value)}
+                placeholder="Contanos qué pasó (opcional)"
+              />
+              {reportError && (
+                <p className="text-sm text-red-700">{reportError}</p>
+              )}
+              <div className="flex gap-2">
+                <button
+                  type="submit"
+                  disabled={reportSending}
+                  className="h-11 flex-1 rounded-xl bg-red-700 font-bold text-white disabled:opacity-60"
+                >
+                  {reportSending ? "Enviando..." : "Enviar denuncia"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReport(false)}
+                  className="h-11 flex-1 rounded-xl border border-[#b9c7c7] font-bold"
+                >
+                  Cancelar
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
 
       <Link href="/buscar" className="text-sm font-bold text-[#0f5c5c] underline">
         Volver a buscar

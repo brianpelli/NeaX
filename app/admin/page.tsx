@@ -4,29 +4,40 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
-type Estado = "pendiente" | "verificado" | "rechazado";
+type Estado = "abierta" | "revisada" | "descartada";
 
 type Item = {
   id: string;
-  title: string;
-  file_path: string;
+  reason: string;
+  details: string | null;
   status: string;
   created_at: string;
+  reporter: { full_name: string | null } | null;
   professionals: {
+    id: string;
     headline: string | null;
+    is_suspended: boolean;
     profiles: { full_name: string | null } | null;
   } | null;
 };
 
 const ESTADOS: Record<Estado, string> = {
-  pendiente: "Pendientes",
-  verificado: "Verificados",
-  rechazado: "Rechazados",
+  abierta: "Abiertas",
+  revisada: "Revisadas",
+  descartada: "Descartadas",
 };
 
-export default function AdminPage() {
+const MOTIVOS: Record<string, string> = {
+  perfil_falso: "Perfil falso o datos inventados",
+  suplantacion: "Suplanta a otra persona",
+  estafa: "Intento de estafa o cobro indebido",
+  contenido_inapropiado: "Contenido inapropiado u ofensivo",
+  otro: "Otro motivo",
+};
+
+export default function DenunciasPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
-  const [estado, setEstado] = useState<Estado>("pendiente");
+  const [estado, setEstado] = useState<Estado>("abierta");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,9 +52,9 @@ export default function AdminPage() {
     setLoading(true);
     setError(null);
     const { data, error: loadError } = await createClient()
-      .from("certificates")
+      .from("reports")
       .select(
-        "id, title, file_path, status, created_at, professionals(headline, profiles(full_name))"
+        "id, reason, details, status, created_at, reporter:profiles!reporter_id(full_name), professionals(id, headline, is_suspended, profiles(full_name))"
       )
       .eq("status", estado)
       .order("created_at", { ascending: true });
@@ -59,22 +70,24 @@ export default function AdminPage() {
     if (allowed) load();
   }, [allowed, load]);
 
-  async function handleView(path: string) {
-    const { data, error: urlError } = await createClient()
-      .storage.from("certificates")
-      .createSignedUrl(path, 60);
-    if (urlError || !data) {
-      setError("No se pudo abrir el archivo.");
-      return;
-    }
-    window.open(data.signedUrl, "_blank");
-  }
-
-  async function handleSet(id: string, status: Estado) {
+  async function setStatus(id: string, status: Estado) {
     setError(null);
     const { error: rpcError } = await createClient().rpc(
-      "admin_set_certificate_status",
-      { p_certificate_id: id, p_status: status }
+      "admin_set_report_status",
+      { p_report_id: id, p_status: status }
+    );
+    if (rpcError) {
+      setError(rpcError.message);
+      return;
+    }
+    await load();
+  }
+
+  async function setSuspended(professionalId: string, suspended: boolean) {
+    setError(null);
+    const { error: rpcError } = await createClient().rpc(
+      "admin_set_suspended",
+      { p_professional_id: professionalId, p_suspended: suspended }
     );
     if (rpcError) {
       setError(rpcError.message);
@@ -104,7 +117,7 @@ export default function AdminPage() {
 
   return (
     <main className={mainClass}>
-      <h1 className="text-3xl font-bold">Verificación de certificados</h1>
+      <h1 className="text-3xl font-bold">Denuncias</h1>
 
       <select
         aria-label="Estado"
@@ -122,7 +135,7 @@ export default function AdminPage() {
       {error && <p className="text-sm text-red-700">{error}</p>}
       {loading && <p className="text-sm text-[#55666a]">Cargando...</p>}
       {!loading && items.length === 0 && (
-        <p className="text-sm text-[#55666a]">No hay documentos en este estado.</p>
+        <p className="text-sm text-[#55666a]">No hay denuncias en este estado.</p>
       )}
 
       {items.map((item) => (
@@ -130,43 +143,67 @@ export default function AdminPage() {
           key={item.id}
           className="flex flex-col gap-2 rounded-2xl border border-[#dde4e4] bg-white p-4"
         >
-          <div className="font-bold">{item.title}</div>
+          <div className="font-bold">
+            {MOTIVOS[item.reason] ?? item.reason}
+          </div>
+          {item.details && <p className="text-[15px]">“{item.details}”</p>}
           <div className="text-sm text-[#55666a]">
-            {item.professionals?.profiles?.full_name ?? "Sin nombre"} ·{" "}
+            Perfil: {item.professionals?.profiles?.full_name ?? "Sin nombre"} ·{" "}
             {item.professionals?.headline ?? "Sin título"}
+            {item.professionals?.is_suspended && " (suspendido)"}
           </div>
           <div className="text-sm text-[#55666a]">
-            Subido el {new Date(item.created_at).toLocaleDateString("es-AR")}
+            Denunciado por {item.reporter?.full_name ?? "Sin nombre"} el{" "}
+            {new Date(item.created_at).toLocaleDateString("es-AR")}
           </div>
-          <button
-            onClick={() => handleView(item.file_path)}
-            className="w-fit text-sm font-bold text-[#0f5c5c] underline"
-          >
-            Ver documento
-          </button>
-          <div className="flex gap-2">
-            {item.status !== "verificado" && (
+          {item.professionals && (
+            <Link
+              href={`/profesional/${item.professionals.id}`}
+              className="w-fit text-sm font-bold text-[#0f5c5c] underline"
+            >
+              Ver perfil
+            </Link>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {item.professionals && (
               <button
-                onClick={() => handleSet(item.id, "verificado")}
-                className="h-11 flex-1 rounded-xl bg-[#0f5c5c] font-bold text-white"
+                onClick={() =>
+                  setSuspended(
+                    item.professionals!.id,
+                    !item.professionals!.is_suspended
+                  )
+                }
+                className="h-11 flex-1 rounded-xl border border-red-700 px-3 font-bold text-red-700"
               >
-                Aprobar
+                {item.professionals.is_suspended
+                  ? "Reactivar perfil"
+                  : "Suspender perfil"}
               </button>
             )}
-            {item.status !== "rechazado" && (
+          </div>
+          <div className="flex gap-2">
+            {item.status !== "revisada" && (
               <button
-                onClick={() => handleSet(item.id, "rechazado")}
-                className="h-11 flex-1 rounded-xl border border-red-700 font-bold text-red-700"
+                onClick={() => setStatus(item.id, "revisada")}
+                className="h-11 flex-1 rounded-xl bg-[#0f5c5c] font-bold text-white"
               >
-                Rechazar
+                Marcar revisada
+              </button>
+            )}
+            {item.status !== "descartada" && (
+              <button
+                onClick={() => setStatus(item.id, "descartada")}
+                className="h-11 flex-1 rounded-xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+              >
+                Descartar
               </button>
             )}
           </div>
         </div>
       ))}
 
-      <Link href="/" className="text-sm font-bold text-[#0f5c5c] underline">
-        Volver al inicio
+      <Link href="/admin" className="text-sm font-bold text-[#0f5c5c] underline">
+        Volver a verificación
       </Link>
     </main>
   );
