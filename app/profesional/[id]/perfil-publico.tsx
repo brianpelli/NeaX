@@ -22,6 +22,7 @@ type Profesional = {
 
 type Contacto = { phone: string | null; whatsapp: string | null };
 type Certificado = { id: string; title: string };
+type Foto = { id: string; file_path: string; caption: string | null };
 type Resumen = {
   total: number;
   avg_price: number;
@@ -110,6 +111,7 @@ export default function PerfilPublicoPage() {
   const [contact, setContact] = useState<Contacto | null>(null);
   const [summary, setSummary] = useState<Resumen | null>(null);
   const [reviews, setReviews] = useState<Resena[]>([]);
+  const [photos, setPhotos] = useState<Foto[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [hiringId, setHiringId] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState(false);
@@ -164,6 +166,12 @@ export default function PerfilPublicoPage() {
         .order("created_at", { ascending: false })
         .limit(10);
       setReviews((revs ?? []) as unknown as Resena[]);
+	  const { data: photoData } = await supabase
+        .from("work_photos")
+        .select("id, file_path, caption")
+        .eq("professional_id", id)
+        .order("created_at", { ascending: false });
+      setPhotos(photoData ?? []);
 
       const { data: userData } = await supabase.auth.getUser();
       const user = userData.user;
@@ -348,6 +356,31 @@ export default function PerfilPublicoPage() {
         <div className={cardClass}>
           <h2 className="font-bold">Sobre mí</h2>
           <p className="whitespace-pre-line text-[15px]">{pro.description}</p>
+        </div>
+      )}
+
+      {photos.length > 0 && (
+        <div className={cardClass}>
+          <h2 className="font-bold">Trabajos realizados</h2>
+          <div className="grid grid-cols-2 gap-3">
+            {photos.map((f) => (
+              <div key={f.id} className="flex flex-col gap-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={
+                    createClient().storage
+                      .from("work-photos")
+                      .getPublicUrl(f.file_path).data.publicUrl
+                  }
+                  alt={f.caption ?? "Trabajo realizado"}
+                  className="aspect-square w-full rounded-xl object-cover"
+                />
+                {f.caption && (
+                  <p className="text-sm text-[#55666a]">{f.caption}</p>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

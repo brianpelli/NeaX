@@ -9,7 +9,6 @@ type Category = { id: number; name: string; grupo: string };
 
 const GRUPOS: Record<string, string> = {
   oficios: "Oficios",
-  profesiones: "Profesiones",
   cuidado: "Cuidado de personas",
   seguridad: "Seguridad",
 };
@@ -291,6 +290,13 @@ export default function OfrecerPage() {
         className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
       >
         Subir certificados y estudios
+      </Link>
+
+      <Link
+        href="/fotos"
+        className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+      >
+        Subir fotos de mis trabajos
       </Link>
 
       <Link href="/" className="text-sm font-bold text-[#0f5c5c] underline">

@@ -22,7 +22,6 @@ type Resumen = { total: number; avg_overall: number };
 
 const GRUPOS: Record<string, string> = {
   oficios: "Oficios",
-  profesiones: "Profesiones",
   cuidado: "Cuidado de personas",
   seguridad: "Seguridad",
 };
