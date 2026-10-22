@@ -53,7 +53,8 @@ export default function ReferenciasPage() {
         .maybeSingle();
       if (pro) {
         setProfessionalId(pro.id);
-        setGrupo(pro.categories?.grupo ?? null);
+        const categoria = pro.categories as unknown as { grupo: string } | null;
+        setGrupo(categoria?.grupo ?? null);
         await loadItems(pro.id);
       }
       setLoading(false);

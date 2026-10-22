@@ -13,6 +13,7 @@ export default function RegistroPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [accepted, setAccepted] = useState(false);
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -23,7 +24,12 @@ export default function RegistroPage() {
     const { error } = await supabase.auth.signUp({
       email,
       password,
-      options: { data: { full_name: fullName } },
+      options: {
+        data: {
+          full_name: fullName,
+          terms_accepted_at: new Date().toISOString(),
+        },
+      },
     });
 
     setLoading(false);
@@ -74,11 +80,31 @@ export default function RegistroPage() {
           />
         </label>
 
+        <label className="flex items-start gap-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-1 h-5 w-5"
+            checked={accepted}
+            onChange={(e) => setAccepted(e.target.checked)}
+          />
+          <span>
+            Acepto los{" "}
+            <Link href="/terminos" className="font-bold text-[#0f5c5c] underline">
+              Términos y condiciones
+            </Link>{" "}
+            y la{" "}
+            <Link href="/privacidad" className="font-bold text-[#0f5c5c] underline">
+              Política de privacidad
+            </Link>
+            .
+          </span>
+        </label>
+
         {error && <p className="text-sm text-red-700">{error}</p>}
 
         <button
           type="submit"
-          disabled={loading}
+          disabled={loading || !accepted}
           className="h-13 rounded-2xl bg-[#0f5c5c] text-lg font-bold text-white disabled:opacity-60"
         >
           {loading ? "Creando cuenta..." : "Registrarme"}

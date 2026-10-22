@@ -22,6 +22,7 @@ const GRUPOS: Record<string, string> = {
   oficios: "Oficios",
   cuidado: "Cuidado de personas",
   seguridad: "Seguridad",
+  comida: "Comida y productos caseros",
 };
 
 export default function BuscarPage() {

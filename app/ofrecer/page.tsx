@@ -11,6 +11,7 @@ const GRUPOS: Record<string, string> = {
   oficios: "Oficios",
   cuidado: "Cuidado de personas",
   seguridad: "Seguridad",
+  comida: "Comida y productos caseros",
 };
 
 export default function OfrecerPage() {
@@ -159,6 +160,9 @@ export default function OfrecerPage() {
     );
   }
 
+  const esComida =
+    categories.find((c) => String(c.id) === categoryId)?.grupo === "comida";
+
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]">
       <h1 className="text-3xl font-bold">Ofrecé tus servicios</h1>
@@ -186,6 +190,14 @@ export default function OfrecerPage() {
             ))}
           </select>
         </label>
+		
+	    {esComida && (
+          <p className="rounded-xl bg-[#fff4d6] p-3 text-sm text-[#5c4300]">
+            Para vender alimentos puede hacer falta una habilitación municipal.
+            Sos responsable de cumplir las normas que correspondan en tu
+            localidad.
+          </p>
+        )}
 
         <label className={labelClass}>
           Título breve (ej: Plomero matriculado)
@@ -203,7 +215,11 @@ export default function OfrecerPage() {
             className="h-28 rounded-xl border border-[#b9c7c7] bg-white px-4 py-3 text-base text-[#14272b]"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
-            placeholder="Contá qué hacés, tu experiencia y en qué zonas trabajás"
+            placeholder={
+              esComida
+                ? "Contá qué ofrecés, precios aproximados y zonas de entrega"
+                : "Contá qué hacés, tu experiencia y en qué zonas trabajás"
+            }
           />
         </label>
 

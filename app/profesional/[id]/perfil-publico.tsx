@@ -390,6 +390,7 @@ export default function PerfilPublicoPage() {
 	
   const pideReferencias =
     pro.categories?.grupo === "cuidado" || pro.categories?.grupo === "seguridad";
+  const esComida = pro.categories?.grupo === "comida";
 
   return (
     <main className={mainClass}>
@@ -415,6 +416,13 @@ export default function PerfilPublicoPage() {
           </p>
         )}
       </div>
+	  
+	  {esComida && (
+        <p className="text-xs text-[#55666a]">
+          Quien vende alimentos es responsable de contar con la habilitación que
+          corresponda.
+        </p>
+      )}
 
       {pro.description && (
         <div className={cardClass}>
@@ -425,7 +433,9 @@ export default function PerfilPublicoPage() {
 
       {photos.length > 0 && (
         <div className={cardClass}>
-          <h2 className="font-bold">Trabajos realizados</h2>
+          <h2 className="font-bold">
+            {esComida ? "Mis productos" : "Trabajos realizados"}
+          </h2>
           <div className="grid grid-cols-2 gap-3">
             {photos.map((f) => (
               <div key={f.id} className="flex flex-col gap-1">

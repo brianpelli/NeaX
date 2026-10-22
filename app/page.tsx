@@ -15,6 +15,15 @@ export default function Home() {
         Buscar profesionales
       </Link>
       <AuthStatus />
+	  <p className="mt-auto text-center text-sm text-[#55666a]">
+        <Link href="/terminos" className="underline">
+          Términos y condiciones
+        </Link>{" "}
+        ·{" "}
+        <Link href="/privacidad" className="underline">
+          Política de privacidad
+        </Link>
+      </p>
     </main>
   );
 }
