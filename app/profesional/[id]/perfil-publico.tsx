@@ -11,7 +11,7 @@ type Profesional = {
   headline: string | null;
   description: string | null;
   is_verified: boolean;
-  categories: { name: string } | null;
+  categories: { name: string; grupo: string } | null;
   profiles: {
     full_name: string | null;
     country: string | null;
@@ -22,6 +22,12 @@ type Profesional = {
 
 type Contacto = { phone: string | null; whatsapp: string | null };
 type Certificado = { id: string; title: string };
+type Referencia = {
+  id: string;
+  name: string;
+  relationship: string | null;
+  phone: string;
+};
 type Foto = { id: string; file_path: string; caption: string | null };
 type Resumen = {
   total: number;
@@ -128,6 +134,7 @@ export default function PerfilPublicoPage() {
   const [version, setVersion] = useState(0);
   const [files, setFiles] = useState<File[]>([]);
   const [fileKey, setFileKey] = useState(0);
+  const [refs, setRefs] = useState<Referencia[]>([]);
 
   const [reported, setReported] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -150,7 +157,7 @@ export default function PerfilPublicoPage() {
       const { data } = await supabase
         .from("professionals")
         .select(
-          "id, user_id, headline, description, is_verified, categories(name), profiles(full_name, country, province, city)"
+          "id, user_id, headline, description, is_verified, categories(name, grupo), profiles(full_name, country, province, city)"
         )
         .eq("id", id)
         .maybeSingle();
@@ -195,6 +202,13 @@ export default function PerfilPublicoPage() {
           .eq("professional_id", id)
           .eq("status", "verificado");
         setCerts(certData ?? []);
+		
+		const { data: refData } = await supabase
+          .from("professional_references")
+          .select("id, name, relationship, phone")
+          .eq("professional_id", id)
+          .order("created_at", { ascending: true });
+        setRefs(refData ?? []);
 
         const { data: contactData } = await supabase
           .from("professional_contacts")
@@ -373,6 +387,9 @@ export default function PerfilPublicoPage() {
     .slice(0, 2)
     .join("")
     .toUpperCase();
+	
+  const pideReferencias =
+    pro.categories?.grupo === "cuidado" || pro.categories?.grupo === "seguridad";
 
   return (
     <main className={mainClass}>
@@ -550,6 +567,53 @@ export default function PerfilPublicoPage() {
           ))
         )}
       </div>
+	  
+	   {pideReferencias && (
+        <div className={cardClass}>
+          <h2 className="font-bold">Referencias de trabajos anteriores</h2>
+          {!loggedIn ? (
+            <p className="text-sm text-[#55666a]">
+              Para ver las referencias,{" "}
+              <Link href="/login" className={linkClass}>
+                iniciá sesión
+              </Link>{" "}
+              o{" "}
+              <Link href="/registro" className={linkClass}>
+                creá tu cuenta
+              </Link>
+              .
+            </p>
+          ) : refs.length === 0 ? (
+            <p className="text-sm text-[#55666a]">
+              Todavía no cargó referencias.
+            </p>
+          ) : (
+            <>
+              {refs.map((r) => (
+                <div
+                  key={r.id}
+                  className="flex flex-col gap-1 border-t border-[#dde4e4] pt-3 first:border-t-0 first:pt-0"
+                >
+                  <p className="font-bold">{r.name}</p>
+                  {r.relationship && (
+                    <p className="text-sm text-[#55666a]">{r.relationship}</p>
+                  )}
+                  <a
+                    href={`tel:${r.phone}`}
+                    className="w-fit text-sm font-bold text-[#0f5c5c] underline"
+                  >
+                    Llamar: {r.phone}
+                  </a>
+                </div>
+              ))}
+              <p className="text-xs text-[#55666a]">
+                Referencias declaradas por el profesional. La plataforma no las
+                verifica.
+              </p>
+            </>
+          )}
+        </div>
+      )}
 
       <div className={cardClass}>
         <h2 className="font-bold">Contacto</h2>

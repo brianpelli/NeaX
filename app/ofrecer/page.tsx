@@ -298,7 +298,16 @@ export default function OfrecerPage() {
       >
         Subir fotos de mis trabajos
       </Link>
-
+      {["cuidado", "seguridad"].includes(
+        categories.find((c) => String(c.id) === categoryId)?.grupo ?? ""
+      ) && (
+        <Link
+          href="/referencias"
+          className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+        >
+          Cargar referencias de trabajos anteriores
+        </Link>
+      )}
       <Link href="/" className="text-sm font-bold text-[#0f5c5c] underline">
         Volver al inicio
       </Link>
