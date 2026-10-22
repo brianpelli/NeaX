@@ -4,40 +4,29 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 
-type Estado = "abierta" | "revisada" | "descartada";
+type Estado = "pendiente" | "verificado" | "rechazado";
 
 type Item = {
   id: string;
-  reason: string;
-  details: string | null;
+  title: string;
+  file_path: string;
   status: string;
   created_at: string;
-  reporter: { full_name: string | null } | null;
   professionals: {
-    id: string;
     headline: string | null;
-    is_suspended: boolean;
     profiles: { full_name: string | null } | null;
   } | null;
 };
 
 const ESTADOS: Record<Estado, string> = {
-  abierta: "Abiertas",
-  revisada: "Revisadas",
-  descartada: "Descartadas",
+  pendiente: "Pendientes",
+  verificado: "Verificados",
+  rechazado: "Rechazados",
 };
 
-const MOTIVOS: Record<string, string> = {
-  perfil_falso: "Perfil falso o datos inventados",
-  suplantacion: "Suplanta a otra persona",
-  estafa: "Intento de estafa o cobro indebido",
-  contenido_inapropiado: "Contenido inapropiado u ofensivo",
-  otro: "Otro motivo",
-};
-
-export default function DenunciasPage() {
+export default function AdminPage() {
   const [allowed, setAllowed] = useState<boolean | null>(null);
-  const [estado, setEstado] = useState<Estado>("abierta");
+  const [estado, setEstado] = useState<Estado>("pendiente");
   const [items, setItems] = useState<Item[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,9 +41,9 @@ export default function DenunciasPage() {
     setLoading(true);
     setError(null);
     const { data, error: loadError } = await createClient()
-      .from("reports")
+      .from("certificates")
       .select(
-        "id, reason, details, status, created_at, reporter:profiles!reporter_id(full_name), professionals(id, headline, is_suspended, profiles(full_name))"
+        "id, title, file_path, status, created_at, professionals(headline, profiles(full_name))"
       )
       .eq("status", estado)
       .order("created_at", { ascending: true });
@@ -70,24 +59,22 @@ export default function DenunciasPage() {
     if (allowed) load();
   }, [allowed, load]);
 
-  async function setStatus(id: string, status: Estado) {
-    setError(null);
-    const { error: rpcError } = await createClient().rpc(
-      "admin_set_report_status",
-      { p_report_id: id, p_status: status }
-    );
-    if (rpcError) {
-      setError(rpcError.message);
+  async function handleView(path: string) {
+    const { data, error: urlError } = await createClient()
+      .storage.from("certificates")
+      .createSignedUrl(path, 60);
+    if (urlError || !data) {
+      setError("No se pudo abrir el archivo.");
       return;
     }
-    await load();
+    window.open(data.signedUrl, "_blank");
   }
 
-  async function setSuspended(professionalId: string, suspended: boolean) {
+  async function handleSet(id: string, status: Estado) {
     setError(null);
     const { error: rpcError } = await createClient().rpc(
-      "admin_set_suspended",
-      { p_professional_id: professionalId, p_suspended: suspended }
+      "admin_set_certificate_status",
+      { p_certificate_id: id, p_status: status }
     );
     if (rpcError) {
       setError(rpcError.message);
@@ -117,7 +104,13 @@ export default function DenunciasPage() {
 
   return (
     <main className={mainClass}>
-      <h1 className="text-3xl font-bold">Denuncias</h1>
+      <h1 className="text-3xl font-bold">Verificación de certificados</h1>
+      <Link
+        href="/admin/denuncias"
+        className="w-fit text-sm font-bold text-[#0f5c5c] underline"
+      >
+        Ver denuncias
+      </Link>
 
       <select
         aria-label="Estado"
@@ -135,7 +128,7 @@ export default function DenunciasPage() {
       {error && <p className="text-sm text-red-700">{error}</p>}
       {loading && <p className="text-sm text-[#55666a]">Cargando...</p>}
       {!loading && items.length === 0 && (
-        <p className="text-sm text-[#55666a]">No hay denuncias en este estado.</p>
+        <p className="text-sm text-[#55666a]">No hay documentos en este estado.</p>
       )}
 
       {items.map((item) => (
@@ -143,67 +136,43 @@ export default function DenunciasPage() {
           key={item.id}
           className="flex flex-col gap-2 rounded-2xl border border-[#dde4e4] bg-white p-4"
         >
-          <div className="font-bold">
-            {MOTIVOS[item.reason] ?? item.reason}
-          </div>
-          {item.details && <p className="text-[15px]">“{item.details}”</p>}
+          <div className="font-bold">{item.title}</div>
           <div className="text-sm text-[#55666a]">
-            Perfil: {item.professionals?.profiles?.full_name ?? "Sin nombre"} ·{" "}
+            {item.professionals?.profiles?.full_name ?? "Sin nombre"} ·{" "}
             {item.professionals?.headline ?? "Sin título"}
-            {item.professionals?.is_suspended && " (suspendido)"}
           </div>
           <div className="text-sm text-[#55666a]">
-            Denunciado por {item.reporter?.full_name ?? "Sin nombre"} el{" "}
-            {new Date(item.created_at).toLocaleDateString("es-AR")}
+            Subido el {new Date(item.created_at).toLocaleDateString("es-AR")}
           </div>
-          {item.professionals && (
-            <Link
-              href={`/profesional/${item.professionals.id}`}
-              className="w-fit text-sm font-bold text-[#0f5c5c] underline"
-            >
-              Ver perfil
-            </Link>
-          )}
-          <div className="flex flex-wrap gap-2">
-            {item.professionals && (
-              <button
-                onClick={() =>
-                  setSuspended(
-                    item.professionals!.id,
-                    !item.professionals!.is_suspended
-                  )
-                }
-                className="h-11 flex-1 rounded-xl border border-red-700 px-3 font-bold text-red-700"
-              >
-                {item.professionals.is_suspended
-                  ? "Reactivar perfil"
-                  : "Suspender perfil"}
-              </button>
-            )}
-          </div>
+          <button
+            onClick={() => handleView(item.file_path)}
+            className="w-fit text-sm font-bold text-[#0f5c5c] underline"
+          >
+            Ver documento
+          </button>
           <div className="flex gap-2">
-            {item.status !== "revisada" && (
+            {item.status !== "verificado" && (
               <button
-                onClick={() => setStatus(item.id, "revisada")}
+                onClick={() => handleSet(item.id, "verificado")}
                 className="h-11 flex-1 rounded-xl bg-[#0f5c5c] font-bold text-white"
               >
-                Marcar revisada
+                Aprobar
               </button>
             )}
-            {item.status !== "descartada" && (
+            {item.status !== "rechazado" && (
               <button
-                onClick={() => setStatus(item.id, "descartada")}
-                className="h-11 flex-1 rounded-xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+                onClick={() => handleSet(item.id, "rechazado")}
+                className="h-11 flex-1 rounded-xl border border-red-700 font-bold text-red-700"
               >
-                Descartar
+                Rechazar
               </button>
             )}
           </div>
         </div>
       ))}
 
-      <Link href="/admin" className="text-sm font-bold text-[#0f5c5c] underline">
-        Volver a verificación
+      <Link href="/" className="text-sm font-bold text-[#0f5c5c] underline">
+        Volver al inicio
       </Link>
     </main>
   );

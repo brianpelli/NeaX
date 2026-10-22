@@ -10,15 +10,13 @@ type Resultado = {
   id: string;
   headline: string | null;
   is_verified: boolean;
-  categories: { name: string } | null;
-  profiles: {
-    full_name: string | null;
-    province: string | null;
-    city: string | null;
-  } | null;
+  category_name: string | null;
+  full_name: string | null;
+  province: string | null;
+  city: string | null;
+  total_reviews: number;
+  avg_overall: number | null;
 };
-
-type Resumen = { total: number; avg_overall: number };
 
 const GRUPOS: Record<string, string> = {
   oficios: "Oficios",
@@ -31,7 +29,6 @@ export default function BuscarPage() {
   const [categoryId, setCategoryId] = useState("");
   const [city, setCity] = useState("");
   const [results, setResults] = useState<Resultado[]>([]);
-  const [ratings, setRatings] = useState<Record<string, Resumen>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -50,47 +47,26 @@ export default function BuscarPage() {
       setLoading(true);
       setError(null);
 
-      const supabase = createClient();
-
-      let query = supabase
-        .from("professionals")
+      let query = createClient()
+        .from("professional_search")
         .select(
-          "id, headline, is_verified, categories(name), profiles!inner(full_name, province, city)"
+          "id, headline, is_verified, category_name, full_name, province, city, total_reviews, avg_overall"
         )
-        .order("is_verified", { ascending: false })
+        .order("score", { ascending: false })
+        .order("total_reviews", { ascending: false })
         .limit(50);
 
       if (categoryId) query = query.eq("category_id", Number(categoryId));
-      if (city.trim()) query = query.ilike("profiles.city", `%${city.trim()}%`);
+      if (city.trim()) query = query.ilike("city", `%${city.trim()}%`);
 
       const { data, error: searchError } = await query;
       if (cancelled) return;
 
       if (searchError) {
         setError(searchError.message);
-        setLoading(false);
-        return;
+      } else {
+        setResults((data ?? []) as unknown as Resultado[]);
       }
-
-      const rows = (data ?? []) as unknown as Resultado[];
-      setResults(rows);
-
-      if (rows.length > 0) {
-        const { data: rat } = await supabase
-          .from("professional_ratings")
-          .select("professional_id, total, avg_overall")
-          .in(
-            "professional_id",
-            rows.map((r) => r.id)
-          );
-        if (cancelled) return;
-        setRatings(
-          Object.fromEntries(
-            (rat ?? []).map((x) => [x.professional_id, x as Resumen])
-          )
-        );
-      }
-
       setLoading(false);
     }
 
@@ -136,6 +112,8 @@ export default function BuscarPage() {
         onChange={(e) => setCity(e.target.value)}
       />
 
+      <p className="text-sm text-[#55666a]">Ordenados por mejor calificación</p>
+
       {error && <p className="text-sm text-red-700">{error}</p>}
       {loading && <p className="text-sm text-[#55666a]">Buscando...</p>}
       {!loading && !error && results.length === 0 && (
@@ -150,20 +128,18 @@ export default function BuscarPage() {
           href={`/profesional/${r.id}`}
           className="flex flex-col gap-1 rounded-2xl border border-[#dde4e4] bg-white p-4"
         >
-          <span className="text-lg font-bold">
-            {r.profiles?.full_name ?? "Sin nombre"}
+          <span className="text-lg font-bold">{r.full_name ?? "Sin nombre"}</span>
+          <span className="text-sm text-[#55666a]">
+            {r.headline ?? r.category_name}
           </span>
           <span className="text-sm text-[#55666a]">
-            {r.headline ?? r.categories?.name}
+            {[r.city, r.province].filter(Boolean).join(", ")}
           </span>
-          <span className="text-sm text-[#55666a]">
-            {[r.profiles?.city, r.profiles?.province].filter(Boolean).join(", ")}
-          </span>
-          {ratings[r.id] && (
+          {r.total_reviews > 0 && r.avg_overall !== null && (
             <span className="text-sm">
               <span className="text-[#e9a23b]">★</span>{" "}
-              {Number(ratings[r.id].avg_overall).toFixed(1).replace(".", ",")} (
-              {ratings[r.id].total})
+              {Number(r.avg_overall).toFixed(1).replace(".", ",")} (
+              {r.total_reviews})
             </span>
           )}
           {r.is_verified && (

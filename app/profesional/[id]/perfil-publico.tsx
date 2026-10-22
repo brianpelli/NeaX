@@ -52,6 +52,15 @@ const MOTIVOS: Record<string, string> = {
   otro: "Otro motivo",
 };
 
+const TIPOS_EVIDENCIA = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+  "application/pdf",
+];
+const MAX_EVIDENCIA = 5;
+const MAX_BYTES_EVIDENCIA = 5 * 1024 * 1024;
+
 function Barra({ label, value }: { label: string; value: number }) {
   return (
     <div className="flex items-center gap-3 text-[15px]">
@@ -117,6 +126,8 @@ export default function PerfilPublicoPage() {
   const [reviewed, setReviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileKey, setFileKey] = useState(0);
 
   const [reported, setReported] = useState(false);
   const [showReport, setShowReport] = useState(false);
@@ -271,22 +282,58 @@ export default function PerfilPublicoPage() {
     e.preventDefault();
     if (!userId) return;
     setReportError(null);
+
+    for (const f of files) {
+      if (!TIPOS_EVIDENCIA.includes(f.type)) {
+        setReportError(
+          "La evidencia tiene que ser una imagen (JPG, PNG, WEBP) o un PDF."
+        );
+        return;
+      }
+      if (f.size > MAX_BYTES_EVIDENCIA) {
+        setReportError("Cada archivo puede pesar hasta 5 MB.");
+        return;
+      }
+    }
+
     setReportSending(true);
-    const { error: insertError } = await createClient()
-      .from("reports")
-      .insert({
+    const supabase = createClient();
+    const reportId = crypto.randomUUID();
+    const paths: string[] = [];
+
+    try {
+      for (const f of files) {
+        const safeName = f.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+        const path = `${userId}/${reportId}/${crypto.randomUUID()}-${safeName}`;
+        const { error: upError } = await supabase.storage
+          .from("report-evidence")
+          .upload(path, f);
+        if (upError) throw new Error(upError.message);
+        paths.push(path);
+      }
+
+      const { error: insertError } = await supabase.from("reports").insert({
+        id: reportId,
         reporter_id: userId,
         professional_id: id,
         reason,
         details: details.trim() || null,
+        evidence: paths,
       });
-    setReportSending(false);
-    if (insertError) {
-      setReportError(insertError.message);
+      if (insertError) throw new Error(insertError.message);
+    } catch (err) {
+      setReportError(
+        err instanceof Error ? err.message : "No se pudo enviar la denuncia."
+      );
+      setReportSending(false);
       return;
     }
+
+    setReportSending(false);
     setShowReport(false);
     setDetails("");
+    setFiles([]);
+    setFileKey((k) => k + 1);
     setVersion((v) => v + 1);
   }
 
@@ -580,6 +627,33 @@ export default function PerfilPublicoPage() {
                 onChange={(e) => setDetails(e.target.value)}
                 placeholder="Contanos qué pasó (opcional)"
               />
+			  <div className="flex flex-col gap-2">
+                <span className="text-sm font-medium">
+                  Evidencia (capturas, fotos o PDF; hasta {MAX_EVIDENCIA})
+                </span>
+                <input
+                  id="evidencia"
+                  key={fileKey}
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  className="sr-only"
+                  onChange={(e) =>
+                    setFiles(Array.from(e.target.files ?? []).slice(0, MAX_EVIDENCIA))
+                  }
+                />
+                <label
+                  htmlFor="evidencia"
+                  className="flex h-11 cursor-pointer items-center justify-center rounded-xl border border-[#0f5c5c] bg-white font-bold text-[#0f5c5c]"
+                >
+                  {files.length > 0 ? "Cambiar archivos" : "Agregar evidencia"}
+                </label>
+                {files.map((f) => (
+                  <p key={f.name} className="text-sm text-[#55666a]">
+                    {f.name}
+                  </p>
+                ))}
+              </div>
               {reportError && (
                 <p className="text-sm text-red-700">{reportError}</p>
               )}
