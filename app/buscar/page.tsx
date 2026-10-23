@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import Avatar from "@/components/Avatar";
 
 type Category = { id: number; name: string; grupo: string };
 
@@ -16,6 +17,7 @@ type Resultado = {
   city: string | null;
   total_reviews: number;
   avg_overall: number | null;
+  avatar_path: string | null;
 };
 
 const GRUPOS: Record<string, string> = {
@@ -36,7 +38,7 @@ export default function BuscarPage() {
   useEffect(() => {
     createClient()
       .from("categories")
-      .select("id, name, grupo")
+      .select("id, name, grupo, avatar_path")
       .order("name")
       .then(({ data }) => setCategories(data ?? []));
   }, []);
@@ -51,7 +53,7 @@ export default function BuscarPage() {
       let query = createClient()
         .from("professional_search")
         .select(
-          "id, headline, is_verified, category_name, full_name, province, city, total_reviews, avg_overall"
+          "id, headline, is_verified, category_name, full_name, province, city, total_reviews, avg_overall, avatar_path"
         )
         .order("score", { ascending: false })
         .order("total_reviews", { ascending: false })
@@ -127,27 +129,32 @@ export default function BuscarPage() {
         <Link
           key={r.id}
           href={`/profesional/${r.id}`}
-          className="flex flex-col gap-1 rounded-2xl border border-[#dde4e4] bg-white p-4"
+          className="flex items-center gap-3 rounded-2xl border border-[#dde4e4] bg-white p-4"
         >
-          <span className="text-lg font-bold">{r.full_name ?? "Sin nombre"}</span>
-          <span className="text-sm text-[#55666a]">
-            {r.headline ?? r.category_name}
-          </span>
-          <span className="text-sm text-[#55666a]">
-            {[r.city, r.province].filter(Boolean).join(", ")}
-          </span>
-          {r.total_reviews > 0 && r.avg_overall !== null && (
-            <span className="text-sm">
-              <span className="text-[#e9a23b]">★</span>{" "}
-              {Number(r.avg_overall).toFixed(1).replace(".", ",")} (
-              {r.total_reviews})
+          <Avatar path={r.avatar_path} name={r.full_name ?? ""} size={56} />
+          <div className="flex min-w-0 flex-col gap-1">
+            <span className="text-lg font-bold">
+              {r.full_name ?? "Sin nombre"}
             </span>
-          )}
-          {r.is_verified && (
-            <span className="mt-1 w-fit rounded-lg bg-[#dff0ec] px-2 py-0.5 text-sm font-medium text-[#0b4a4a]">
-              Verificado
+            <span className="text-sm text-[#55666a]">
+              {r.headline ?? r.category_name}
             </span>
-          )}
+            <span className="text-sm text-[#55666a]">
+              {[r.city, r.province].filter(Boolean).join(", ")}
+            </span>
+            {r.total_reviews > 0 && r.avg_overall !== null && (
+              <span className="text-sm">
+                <span className="text-[#e9a23b]">★</span>{" "}
+                {Number(r.avg_overall).toFixed(1).replace(".", ",")} (
+                {r.total_reviews})
+              </span>
+            )}
+            {r.is_verified && (
+              <span className="w-fit rounded-lg bg-[#dff0ec] px-2 py-0.5 text-sm font-medium text-[#0b4a4a]">
+                Verificado
+              </span>
+            )}
+          </div>
         </Link>
       ))}
 

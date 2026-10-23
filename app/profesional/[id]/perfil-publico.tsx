@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import Avatar from "@/components/Avatar";
 
 type Profesional = {
   id: string;
@@ -17,18 +18,19 @@ type Profesional = {
     country: string | null;
     province: string | null;
     city: string | null;
+    avatar_path: string | null;
   } | null;
 };
 
 type Contacto = { phone: string | null; whatsapp: string | null };
 type Certificado = { id: string; title: string };
+type Foto = { id: string; file_path: string; caption: string | null };
 type Referencia = {
   id: string;
   name: string;
   relationship: string | null;
   phone: string;
 };
-type Foto = { id: string; file_path: string; caption: string | null };
 type Resumen = {
   total: number;
   avg_price: number;
@@ -123,23 +125,23 @@ export default function PerfilPublicoPage() {
 
   const [pro, setPro] = useState<Profesional | null>(null);
   const [certs, setCerts] = useState<Certificado[]>([]);
+  const [photos, setPhotos] = useState<Foto[]>([]);
+  const [refs, setRefs] = useState<Referencia[]>([]);
   const [contact, setContact] = useState<Contacto | null>(null);
   const [summary, setSummary] = useState<Resumen | null>(null);
   const [reviews, setReviews] = useState<Resena[]>([]);
-  const [photos, setPhotos] = useState<Foto[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
   const [hiringId, setHiringId] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
-  const [files, setFiles] = useState<File[]>([]);
-  const [fileKey, setFileKey] = useState(0);
-  const [refs, setRefs] = useState<Referencia[]>([]);
 
   const [reported, setReported] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [reason, setReason] = useState("perfil_falso");
   const [details, setDetails] = useState("");
+  const [files, setFiles] = useState<File[]>([]);
+  const [fileKey, setFileKey] = useState(0);
   const [reportSending, setReportSending] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
@@ -157,7 +159,7 @@ export default function PerfilPublicoPage() {
       const { data } = await supabase
         .from("professionals")
         .select(
-          "id, user_id, headline, description, is_verified, categories(name, grupo), profiles(full_name, country, province, city)"
+          "id, user_id, headline, description, is_verified, categories(name, grupo), profiles(full_name, country, province, city, avatar_path)"
         )
         .eq("id", id)
         .maybeSingle();
@@ -184,7 +186,8 @@ export default function PerfilPublicoPage() {
         .order("created_at", { ascending: false })
         .limit(10);
       setReviews((revs ?? []) as unknown as Resena[]);
-	  const { data: photoData } = await supabase
+
+      const { data: photoData } = await supabase
         .from("work_photos")
         .select("id, file_path, caption")
         .eq("professional_id", id)
@@ -202,8 +205,8 @@ export default function PerfilPublicoPage() {
           .eq("professional_id", id)
           .eq("status", "verificado");
         setCerts(certData ?? []);
-		
-		const { data: refData } = await supabase
+
+        const { data: refData } = await supabase
           .from("professional_references")
           .select("id, name, relationship, phone")
           .eq("professional_id", id)
@@ -381,13 +384,6 @@ export default function PerfilPublicoPage() {
   ]
     .filter(Boolean)
     .join(", ");
-  const initials = name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-	
   const pideReferencias =
     pro.categories?.grupo === "cuidado" || pro.categories?.grupo === "seguridad";
   const esComida = pro.categories?.grupo === "comida";
@@ -395,9 +391,7 @@ export default function PerfilPublicoPage() {
   return (
     <main className={mainClass}>
       <div className="flex flex-col items-center gap-1.5 text-center">
-        <div className="flex h-22 w-22 items-center justify-center rounded-full bg-[#d5e8e6] text-3xl font-bold text-[#0b4a4a]">
-          {initials}
-        </div>
+        <Avatar path={pro.profiles?.avatar_path ?? null} name={name} size={88} />
         <h1 className="text-2xl font-bold">{name}</h1>
         <p className="text-[#55666a]">{pro.headline ?? pro.categories?.name}</p>
         <p className="text-sm text-[#55666a]">{location}</p>
@@ -416,19 +410,19 @@ export default function PerfilPublicoPage() {
           </p>
         )}
       </div>
-	  
-	  {esComida && (
-        <p className="text-xs text-[#55666a]">
-          Quien vende alimentos es responsable de contar con la habilitación que
-          corresponda.
-        </p>
-      )}
 
       {pro.description && (
         <div className={cardClass}>
           <h2 className="font-bold">Sobre mí</h2>
           <p className="whitespace-pre-line text-[15px]">{pro.description}</p>
         </div>
+      )}
+
+      {esComida && (
+        <p className="text-xs text-[#55666a]">
+          Quien vende alimentos es responsable de contar con la habilitación que
+          corresponda.
+        </p>
       )}
 
       {photos.length > 0 && (
@@ -446,7 +440,7 @@ export default function PerfilPublicoPage() {
                       .from("work-photos")
                       .getPublicUrl(f.file_path).data.publicUrl
                   }
-                  alt={f.caption ?? "Trabajo realizado"}
+                  alt={f.caption ?? "Foto"}
                   className="aspect-square w-full rounded-xl object-cover"
                 />
                 {f.caption && (
@@ -577,8 +571,8 @@ export default function PerfilPublicoPage() {
           ))
         )}
       </div>
-	  
-	   {pideReferencias && (
+
+      {pideReferencias && (
         <div className={cardClass}>
           <h2 className="font-bold">Referencias de trabajos anteriores</h2>
           {!loggedIn ? (
@@ -701,7 +695,7 @@ export default function PerfilPublicoPage() {
                 onChange={(e) => setDetails(e.target.value)}
                 placeholder="Contanos qué pasó (opcional)"
               />
-			  <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-2">
                 <span className="text-sm font-medium">
                   Evidencia (capturas, fotos o PDF; hasta {MAX_EVIDENCIA})
                 </span>
@@ -713,7 +707,9 @@ export default function PerfilPublicoPage() {
                   accept="image/jpeg,image/png,image/webp,application/pdf"
                   className="sr-only"
                   onChange={(e) =>
-                    setFiles(Array.from(e.target.files ?? []).slice(0, MAX_EVIDENCIA))
+                    setFiles(
+                      Array.from(e.target.files ?? []).slice(0, MAX_EVIDENCIA)
+                    )
                   }
                 />
                 <label

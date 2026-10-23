@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
+import AvatarUploader from "@/components/AvatarUploader";
 
 type Category = { id: number; name: string; grupo: string };
 
@@ -166,6 +167,7 @@ export default function OfrecerPage() {
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]">
       <h1 className="text-3xl font-bold">Ofrecé tus servicios</h1>
+	  <AvatarUploader />
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <label className={labelClass}>
