@@ -155,7 +155,7 @@ export default function OfrecerPage() {
 
   if (loading) {
     return (
-      <main className="mx-auto min-h-screen max-w-md bg-[#f4f6f6] p-6 text-[#14272b]">
+      <main className="mx-auto min-h-screen max-w-md md:max-w-3xl bg-[#f4f6f6] p-6 text-[#14272b]">
         Cargando...
       </main>
     );
@@ -165,7 +165,7 @@ export default function OfrecerPage() {
     categories.find((c) => String(c.id) === categoryId)?.grupo === "comida";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]">
+    <main className="mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]">
       <h1 className="text-3xl font-bold">Ofrecé tus servicios</h1>
 	  <AvatarUploader />
 

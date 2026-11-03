@@ -358,7 +358,7 @@ export default function PerfilPublicoPage() {
   const isOwner = pro !== null && pro.user_id === userId;
 
   const mainClass =
-    "mx-auto flex min-h-screen max-w-md flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]";
+    "mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]";
   const cardClass =
     "flex flex-col gap-2 rounded-2xl border border-[#dde4e4] bg-white p-4";
   const linkClass = "font-bold text-[#0f5c5c] underline";

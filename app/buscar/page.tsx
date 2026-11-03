@@ -84,7 +84,7 @@ export default function BuscarPage() {
     "h-12 rounded-xl border border-[#b9c7c7] bg-white px-4 text-base text-[#14272b]";
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col gap-4 bg-[#f4f6f6] p-6 text-[#14272b]">
+    <main className="mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-4 bg-[#f4f6f6] p-6 text-[#14272b]">
       <h1 className="text-3xl font-bold">¿Qué necesitás?</h1>
 
       <select

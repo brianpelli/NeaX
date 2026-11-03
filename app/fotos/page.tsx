@@ -137,7 +137,7 @@ export default function FotosPage() {
   }
 
   const mainClass =
-    "mx-auto flex min-h-screen max-w-md flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]";
+    "mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]";
 
   if (loading) return <main className={mainClass}>Cargando...</main>;
 
