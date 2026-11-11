@@ -118,6 +118,8 @@ ALTER TABLE categories ADD CONSTRAINT categories_grupo_check CHECK (grupo = ANY 
 ALTER TABLE categories ADD CONSTRAINT categories_pkey PRIMARY KEY (id);
 ALTER TABLE categories ADD CONSTRAINT categories_slug_key UNIQUE (slug);
 ALTER TABLE certificates ADD CONSTRAINT certificates_pkey PRIMARY KEY (id);
+ALTER TABLE professionals ADD CONSTRAINT professionals_pkey PRIMARY KEY (id);
+ALTER TABLE profiles ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
 ALTER TABLE certificates ADD CONSTRAINT certificates_professional_id_fkey FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE CASCADE;
 ALTER TABLE certificates ADD CONSTRAINT certificates_status_check CHECK (status = ANY (ARRAY['pendiente'::text, 'verificado'::text, 'rechazado'::text]));
 ALTER TABLE hirings ADD CONSTRAINT hirings_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -133,11 +135,9 @@ ALTER TABLE professional_references ADD CONSTRAINT professional_references_pkey 
 ALTER TABLE professional_references ADD CONSTRAINT professional_references_professional_id_fkey FOREIGN KEY (professional_id) REFERENCES professionals(id) ON DELETE CASCADE;
 ALTER TABLE professional_references ADD CONSTRAINT professional_references_relationship_check CHECK (char_length(relationship) <= 120);
 ALTER TABLE professionals ADD CONSTRAINT professionals_category_id_fkey FOREIGN KEY (category_id) REFERENCES categories(id);
-ALTER TABLE professionals ADD CONSTRAINT professionals_pkey PRIMARY KEY (id);
 ALTER TABLE professionals ADD CONSTRAINT professionals_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE professionals ADD CONSTRAINT professionals_user_id_key UNIQUE (user_id);
 ALTER TABLE profiles ADD CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE;
-ALTER TABLE profiles ADD CONSTRAINT profiles_pkey PRIMARY KEY (id);
 ALTER TABLE reports ADD CONSTRAINT reports_details_check CHECK (char_length(details) <= 500);
 ALTER TABLE reports ADD CONSTRAINT reports_evidence_max CHECK (cardinality(evidence) <= 5);
 ALTER TABLE reports ADD CONSTRAINT reports_pkey PRIMARY KEY (id);
@@ -192,7 +192,7 @@ begin
   )
   where id = v_professional;
 end;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.admin_set_report_status(p_report_id uuid, p_status text)
  RETURNS void
@@ -207,7 +207,7 @@ begin
   end if;
   update public.reports set status = p_status where id = p_report_id;
 end;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.admin_set_suspended(p_professional_id uuid, p_suspended boolean)
  RETURNS void
@@ -220,7 +220,7 @@ begin
   update public.professionals set is_suspended = p_suspended
   where id = p_professional_id;
 end;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.handle_new_user()
  RETURNS trigger
@@ -233,7 +233,7 @@ begin
   values (new.id, new.raw_user_meta_data->>'full_name');
   return new;
 end;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.is_admin()
  RETURNS boolean
@@ -242,7 +242,7 @@ CREATE OR REPLACE FUNCTION public.is_admin()
  SET search_path TO ''
 AS $function$
   select exists (select 1 from public.admins where user_id = auth.uid());
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.limit_references()
  RETURNS trigger
@@ -257,7 +257,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 
 CREATE OR REPLACE FUNCTION public.limit_work_photos()
  RETURNS trigger
@@ -272,7 +272,7 @@ begin
   end if;
   return new;
 end;
-$function$
+$function$;
 
 
 -- VIEWS
