@@ -34,6 +34,12 @@ export default function AuthStatus() {
       <div className="flex flex-col gap-3">
         <p className="text-center text-lg">Hola, {name}</p>
         <Link
+          href="/contactos"
+          className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+        >
+          Mis contactos
+        </Link>
+        <Link
           href="/ofrecer"
           className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
         >
