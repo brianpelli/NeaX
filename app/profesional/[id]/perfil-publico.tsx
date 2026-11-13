@@ -23,6 +23,11 @@ type Profesional = {
 };
 
 type Contacto = { phone: string | null; whatsapp: string | null };
+type IntentoContacto = {
+  id: string;
+  attempted_at: string;
+  confirmed_at: string | null;
+};
 type Certificado = { id: string; title: string };
 type Foto = { id: string; file_path: string; caption: string | null };
 type Referencia = {
@@ -128,6 +133,15 @@ export default function PerfilPublicoPage() {
   const [photos, setPhotos] = useState<Foto[]>([]);
   const [refs, setRefs] = useState<Referencia[]>([]);
   const [contact, setContact] = useState<Contacto | null>(null);
+  const [contactAttempt, setContactAttempt] = useState<IntentoContacto | null>(null);
+  const [contactReused, setContactReused] = useState(false);
+  const [contactBusy, setContactBusy] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [contactError, setContactError] = useState<string | null>(null);
+  const [contactUnavailable, setContactUnavailable] = useState(false);
+  const [contactUnavailableMessage, setContactUnavailableMessage] = useState<string | null>(null);
+  const [contactActionUrl, setContactActionUrl] = useState<string | null>(null);
+  const [contactActionLabel, setContactActionLabel] = useState("Abrir contacto");
   const [summary, setSummary] = useState<Resumen | null>(null);
   const [reviews, setReviews] = useState<Resena[]>([]);
   const [userId, setUserId] = useState<string | null>(null);
@@ -213,12 +227,13 @@ export default function PerfilPublicoPage() {
           .order("created_at", { ascending: true });
         setRefs(refData ?? []);
 
-        const { data: contactData } = await supabase
-          .from("professional_contacts")
-          .select("phone, whatsapp")
+        const { data: attemptData } = await supabase
+          .from("professional_contact_attempts")
+          .select("id, attempted_at, confirmed_at")
           .eq("professional_id", id)
           .maybeSingle();
-        setContact(contactData);
+        setContactAttempt(attemptData as IntentoContacto | null);
+        setContactReused(!!attemptData);
 
         const { data: hiring } = await supabase
           .from("hirings")
@@ -248,19 +263,127 @@ export default function PerfilPublicoPage() {
     load();
   }, [id, version]);
 
-  async function handleHire() {
-    if (!userId) return;
-    setError(null);
-    setSending(true);
-    const { error: hireError } = await createClient()
-      .from("hirings")
-      .insert({ professional_id: id, client_id: userId });
-    setSending(false);
-    if (hireError) {
-      setError(hireError.message);
-      return;
+  async function handleStartContact() {
+    if (!userId || contactBusy) return;
+
+    setContactError(null);
+    setContactUnavailable(false);
+    setContactUnavailableMessage(null);
+    setContactActionUrl(null);
+    setContactBusy(true);
+
+    const popup = window.open("about:blank", "_blank");
+    if (popup) popup.opener = null;
+    try {
+      const { data, error: startError } = await createClient().rpc(
+        "start_professional_contact",
+        { p_professional_id: id }
+      );
+
+      if (startError) {
+        popup?.close();
+        if (startError.code === "P0001") {
+          setContactError(
+            "Alcanzaste el máximo de 10 profesionales nuevos en las últimas 24 horas. Podrás contactar a otros cuando se libere un cupo."
+          );
+        } else {
+          const unavailable = startError.code === "P0002";
+          setContactUnavailable(unavailable);
+          setContactUnavailableMessage(
+            unavailable ? "Este perfil profesional no está disponible." : null
+          );
+          setContactError(unavailable ? null : startError.message);
+        }
+        return;
+      }
+
+      const result = data as {
+        status: "created" | "reused" | "no_contact";
+        attempt_id: string | null;
+        attempted_at: string | null;
+        confirmed_at: string | null;
+        phone: string | null;
+        whatsapp: string | null;
+        contact_method: "whatsapp" | "phone" | null;
+        reused: boolean;
+      } | null;
+
+      if (!result) {
+        popup?.close();
+        setContactError("No pudimos obtener los datos de contacto.");
+        return;
+      }
+
+      if (result.status === "no_contact") {
+        popup?.close();
+        setContactUnavailable(true);
+        setContactUnavailableMessage(
+          "Esta persona todavía no cargó un teléfono ni un WhatsApp."
+        );
+        return;
+      }
+
+      if (!result.attempt_id || !result.attempted_at || !result.contact_method) {
+        popup?.close();
+        setContactError("No pudimos obtener los datos de contacto.");
+        return;
+      }
+
+      setContact({ phone: result.phone, whatsapp: result.whatsapp });
+      setContactAttempt({
+        id: result.attempt_id,
+        attempted_at: result.attempted_at,
+        confirmed_at: result.confirmed_at,
+      });
+      setContactReused(result.reused);
+
+      const url = result.contact_method === "whatsapp"
+        ? `https://wa.me/${result.whatsapp}`
+        : `tel:${(result.phone ?? "").replace(/[^\d+*#,;]/g, "")}`;
+      const actionLabel = result.contact_method === "whatsapp"
+        ? "Abrir WhatsApp"
+        : "Llamar por teléfono";
+      setContactActionLabel(actionLabel);
+      if (popup && !popup.closed) {
+        popup.location.replace(url);
+      } else {
+        setContactActionUrl(url);
+        setContactError(
+          `El contacto quedó registrado. Tu navegador bloqueó la pestaña; usá el enlace para ${result.contact_method === "whatsapp" ? "abrir WhatsApp" : "llamar"}.`
+        );
+      }
+    } catch {
+      popup?.close();
+      setContactError("No pudimos registrar el intento. Probá nuevamente.");
+    } finally {
+      setContactBusy(false);
     }
-    setVersion((v) => v + 1);
+  }
+
+  async function handleConfirmContact() {
+    if (!userId || !contactAttempt || confirmBusy) return;
+
+    setContactError(null);
+    setConfirmBusy(true);
+    try {
+      const { data, error: confirmError } = await createClient().rpc(
+        "confirm_professional_contact",
+        { p_attempt_id: contactAttempt.id }
+      );
+
+      if (confirmError || !data) {
+        setContactError(
+          confirmError?.message ?? "No pudimos confirmar el contacto."
+        );
+        return;
+      }
+
+      setContactAttempt({ ...contactAttempt, confirmed_at: data as string });
+    } catch {
+      setContactError("No pudimos confirmar el contacto. Probá nuevamente.");
+    } finally {
+      setConfirmBusy(false);
+    }
   }
 
   async function handleReview(e: React.FormEvent<HTMLFormElement>) {
@@ -476,26 +599,9 @@ export default function PerfilPublicoPage() {
           ))}
       </div>
 
-      {loggedIn && !isOwner && (
+      {loggedIn && !isOwner && hiringId && !reviewed && (
         <div className={cardClass}>
-          {!hiringId && (
-            <>
-              <h2 className="font-bold">¿Trabajaste con esta persona?</h2>
-              <p className="text-sm text-[#55666a]">
-                Marcá que la contrataste para poder calificar su trabajo.
-              </p>
-              <button
-                onClick={handleHire}
-                disabled={sending}
-                className="h-12 rounded-2xl bg-[#0f5c5c] font-bold text-white disabled:opacity-60"
-              >
-                {sending ? "Guardando..." : "Contraté a esta persona"}
-              </button>
-            </>
-          )}
-
-          {hiringId && !reviewed && (
-            <form onSubmit={handleReview} className="flex flex-col gap-4">
+          <form onSubmit={handleReview} className="flex flex-col gap-4">
               <h2 className="font-bold">Calificá el trabajo</h2>
               <StarInput
                 label="Precio"
@@ -532,18 +638,112 @@ export default function PerfilPublicoPage() {
               >
                 {sending ? "Enviando..." : "Enviar calificación"}
               </button>
-            </form>
-          )}
-
-          {hiringId && reviewed && (
-            <p className="text-sm font-medium text-[#0f5c5c]">
-              Ya calificaste este trabajo. ¡Gracias por tu opinión!
-            </p>
-          )}
-
+          </form>
           {error && <p className="text-sm text-red-700">{error}</p>}
         </div>
       )}
+
+      {loggedIn && !isOwner && hiringId && reviewed && (
+        <div className={cardClass}>
+          <p className="text-sm font-medium text-[#0f5c5c]">
+            Ya calificaste este trabajo. ¡Gracias por tu opinión!
+          </p>
+        </div>
+      )}
+
+      <div className={cardClass}>
+        <h2 className="font-bold">Contacto</h2>
+        {!loggedIn && (
+          <p className="text-sm text-[#55666a]">
+            Para contactar a esta persona,{" "}
+            <Link href="/login" className={linkClass}>
+              iniciá sesión
+            </Link>{" "}
+            o{" "}
+            <Link href="/registro" className={linkClass}>
+              creá tu cuenta
+            </Link>
+            .
+          </p>
+        )}
+        {loggedIn && isOwner && (
+          <p className="text-sm text-[#55666a]">Este es tu perfil profesional.</p>
+        )}
+        {loggedIn && !isOwner && !contactAttempt && !contactUnavailable && (
+          <>
+            <p className="text-sm text-[#55666a]">
+              Al continuar, registraremos que intentaste contactar a esta persona.
+              Esto no confirma que el mensaje se haya enviado.
+            </p>
+            <button
+              type="button"
+              onClick={handleStartContact}
+              disabled={contactBusy}
+              className="flex h-12 items-center justify-center rounded-2xl bg-[#0f5c5c] font-bold text-white disabled:opacity-60"
+            >
+              {contactBusy ? "Preparando contacto..." : "Contactar"}
+            </button>
+          </>
+        )}
+        {loggedIn && !isOwner && !contactAttempt && contactUnavailable && (
+          <p className="text-sm text-[#55666a]">
+            {contactUnavailableMessage ?? "Este perfil no está disponible para contactar."}
+          </p>
+        )}
+        {loggedIn && !isOwner && contactAttempt && (
+          <>
+            <p className="text-sm text-[#55666a]">
+              {contactReused ? "Contacto ya registrado el " : "Contacto registrado el "}{" "}
+              {new Date(contactAttempt.attempted_at).toLocaleDateString("es-AR")}.
+              {contactReused && " Reutilizarlo no consume otro cupo."}{" "}
+              El registro no confirma el envío del mensaje ni que se haya realizado
+              un trabajo.
+            </p>
+            {!contactAttempt.confirmed_at ? (
+              <button
+                type="button"
+                onClick={handleConfirmContact}
+                disabled={confirmBusy}
+                className="h-12 rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c] disabled:opacity-60"
+              >
+                {confirmBusy ? "Guardando..." : "Contacté a esta persona"}
+              </button>
+            ) : (
+              <p className="text-sm font-medium text-[#0f5c5c]">
+                Confirmaste manualmente el contacto. La calificación estará
+                disponible en una fase posterior.
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleStartContact}
+              disabled={contactBusy}
+              className="h-12 rounded-2xl bg-[#0f5c5c] font-bold text-white disabled:opacity-60"
+            >
+              {contactBusy ? "Abriendo contacto..." : "Volver a contactar"}
+            </button>
+          </>
+        )}
+        {contactActionUrl && (
+          <a
+            href={contactActionUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+          >
+            {contactActionLabel}
+          </a>
+        )}
+        {contact?.phone && (
+          <a
+            href={`tel:${contact.phone}`}
+            className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
+          >
+            Llamar: {contact.phone}
+          </a>
+        )}
+        {contactError && <p className="text-sm text-red-700">{contactError}</p>}
+      </div>
 
       <div className={cardClass}>
         <h2 className="font-bold">Certificados y estudios verificados</h2>
@@ -618,46 +818,6 @@ export default function PerfilPublicoPage() {
           )}
         </div>
       )}
-
-      <div className={cardClass}>
-        <h2 className="font-bold">Contacto</h2>
-        {!loggedIn && (
-          <p className="text-sm text-[#55666a]">
-            Para ver el teléfono y el WhatsApp,{" "}
-            <Link href="/login" className={linkClass}>
-              iniciá sesión
-            </Link>{" "}
-            o{" "}
-            <Link href="/registro" className={linkClass}>
-              creá tu cuenta
-            </Link>
-            .
-          </p>
-        )}
-        {loggedIn && !contact?.phone && !contact?.whatsapp && (
-          <p className="text-sm text-[#55666a]">
-            Esta persona todavía no cargó datos de contacto.
-          </p>
-        )}
-        {loggedIn && contact?.whatsapp && (
-          <a
-            href={`https://wa.me/${contact.whatsapp.replace(/\D/g, "")}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex h-12 items-center justify-center rounded-2xl bg-[#0f5c5c] font-bold text-white"
-          >
-            Escribir por WhatsApp
-          </a>
-        )}
-        {loggedIn && contact?.phone && (
-          <a
-            href={`tel:${contact.phone}`}
-            className="flex h-12 items-center justify-center rounded-2xl border border-[#0f5c5c] font-bold text-[#0f5c5c]"
-          >
-            Llamar: {contact.phone}
-          </a>
-        )}
-      </div>
 
       {loggedIn && !isOwner && (
         <div className="flex flex-col gap-3">
