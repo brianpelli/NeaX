@@ -5,7 +5,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Avatar from "@/components/Avatar";
 
-type Category = { id: number; name: string; grupo: string };
+type Category = { id: number; name: string; grupo: string; is_active: boolean };
 
 type Resultado = {
   id: string;
@@ -25,10 +25,14 @@ const GRUPOS: Record<string, string> = {
   cuidado: "Cuidado de personas",
   seguridad: "Seguridad",
   comida: "Comida y productos caseros",
+  profesiones: "Profesiones",
 };
 
 export default function BuscarPage() {
   const [categories, setCategories] = useState<Category[]>([]);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
+  const [group, setGroup] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [city, setCity] = useState("");
   const [results, setResults] = useState<Resultado[]>([]);
@@ -36,11 +40,28 @@ export default function BuscarPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    createClient()
-      .from("categories")
-      .select("id, name, grupo, avatar_path")
-      .order("name")
-      .then(({ data }) => setCategories(data ?? []));
+    let cancelled = false;
+
+    async function loadCategories() {
+      const { data, error: categoriesError } = await createClient()
+        .from("categories")
+        .select("id, name, grupo, is_active")
+        .eq("is_active", true)
+        .order("name");
+
+      if (cancelled) return;
+      if (categoriesError) {
+        setCategoriesError("No pudimos cargar los rubros y especialidades.");
+      } else {
+        setCategories(data ?? []);
+      }
+      setCategoriesLoading(false);
+    }
+
+    void loadCategories();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -49,6 +70,8 @@ export default function BuscarPage() {
     async function search() {
       setLoading(true);
       setError(null);
+
+      if (categoriesLoading) return;
 
       let query = createClient()
         .from("professional_search")
@@ -59,7 +82,22 @@ export default function BuscarPage() {
         .order("total_reviews", { ascending: false })
         .limit(50);
 
-      if (categoryId) query = query.eq("category_id", Number(categoryId));
+      if (categoryId) {
+        query = query.eq("category_id", Number(categoryId));
+      } else if (group) {
+        const groupCategoryIds = categories
+          .filter((category) => category.grupo === group && category.is_active)
+          .map((category) => category.id);
+
+        if (groupCategoryIds.length === 0) {
+          if (cancelled) return;
+          setResults([]);
+          setLoading(false);
+          return;
+        }
+
+        query = query.in("category_id", groupCategoryIds);
+      }
       if (city.trim()) query = query.ilike("city", `%${city.trim()}%`);
 
       const { data, error: searchError } = await query;
@@ -78,34 +116,85 @@ export default function BuscarPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [categoryId, city]);
+  }, [categoryId, categories, categoriesLoading, city, group]);
 
   const inputClass =
-    "h-12 rounded-xl border border-[#b9c7c7] bg-white px-4 text-base text-[#14272b]";
+    "h-12 rounded-xl border border-[#b9c7c7] bg-white px-4 text-base text-[#14272b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5c5c]";
+  const groupCategories = categories.filter(
+    (category) => !group || category.grupo === group
+  );
+  const specialtyPlaceholder = categoriesLoading
+    ? "Cargando especialidades..."
+    : categoriesError
+      ? "Especialidades no disponibles"
+      : groupCategories.length === 0
+        ? "No hay especialidades activas"
+        : group
+          ? "Todas las especialidades del rubro"
+          : "Todas las especialidades";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-4 bg-[#f4f6f6] p-6 text-[#14272b]">
       <h1 className="text-3xl font-bold">¿Qué necesitás?</h1>
 
-      <select
-        aria-label="Rubro"
-        className={inputClass}
-        value={categoryId}
-        onChange={(e) => setCategoryId(e.target.value)}
-      >
-        <option value="">Todos los rubros</option>
-        {Object.entries(GRUPOS).map(([grupo, titulo]) => (
-          <optgroup key={grupo} label={titulo}>
-            {categories
-              .filter((c) => c.grupo === grupo)
-              .map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-          </optgroup>
-        ))}
-      </select>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="flex flex-col gap-1.5 text-sm font-medium">
+          Rubro
+          <select
+            aria-label="Rubro"
+            className={inputClass}
+            value={group}
+            disabled={categoriesLoading || Boolean(categoriesError)}
+            onChange={(event) => {
+              setGroup(event.target.value);
+              setCategoryId("");
+            }}
+          >
+            <option value="">Todos los rubros</option>
+            {Object.entries(GRUPOS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1.5 text-sm font-medium">
+          Oficio o especialidad
+          <select
+            aria-label="Oficio o especialidad"
+            className={inputClass}
+            value={categoryId}
+            disabled={categoriesLoading || Boolean(categoriesError) || groupCategories.length === 0}
+            onChange={(event) => setCategoryId(event.target.value)}
+          >
+            <option value="">{specialtyPlaceholder}</option>
+            {groupCategories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {group
+                  ? category.name
+                  : `${category.name} (${GRUPOS[category.grupo] ?? category.grupo})`}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {categoriesError && (
+        <p role="alert" className="text-sm text-red-700">
+          {categoriesError}
+        </p>
+      )}
+      {categoriesLoading && (
+        <p role="status" className="text-sm text-[#55666a]">
+          Cargando rubros y especialidades...
+        </p>
+      )}
+      {!categoriesLoading && !categoriesError && group && groupCategories.length === 0 && (
+        <p role="status" className="text-sm text-[#55666a]">
+          Este rubro todavía no tiene especialidades activas.
+        </p>
+      )}
 
       <input
         aria-label="Ciudad"
@@ -119,9 +208,9 @@ export default function BuscarPage() {
 
       {error && <p className="text-sm text-red-700">{error}</p>}
       {loading && <p className="text-sm text-[#55666a]">Buscando...</p>}
-      {!loading && !error && results.length === 0 && (
+      {!loading && !error && results.length === 0 && !(group && groupCategories.length === 0) && (
         <p className="text-sm text-[#55666a]">
-          No encontramos resultados con esos filtros.
+          No encontramos profesionales con esos filtros.
         </p>
       )}
 
