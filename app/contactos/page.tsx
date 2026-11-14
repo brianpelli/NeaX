@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
+import ProfessionalReviewEditor, {
+  type EditableProfessionalReview,
+} from "@/components/reviews/ProfessionalReviewEditor";
 
 type Intento = {
   id: string;
@@ -22,7 +25,11 @@ type Profesional = {
 
 type Contacto = Intento & {
   profesional: Profesional | null;
+  calificacion: EditableProfessionalReview | null;
 };
+
+const REVIEW_FIELDS =
+  "id, professional_id, contact_attempt_id, overall_rating, comment, created_at, edit_count";
 
 function fecha(value: string) {
   return new Date(value).toLocaleDateString("es-AR", {
@@ -38,6 +45,7 @@ export default function ContactosPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [profileWarning, setProfileWarning] = useState<string | null>(null);
+  const [ratingWarning, setRatingWarning] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -46,6 +54,7 @@ export default function ContactosPage() {
     setLoading(true);
     setError(null);
     setProfileWarning(null);
+    setRatingWarning(null);
 
     const { data: attempts, error: attemptsError } = await supabase
       .from("professional_contact_attempts")
@@ -69,24 +78,58 @@ export default function ContactosPage() {
     }
 
     const professionalIds = [...new Set(ownAttempts.map((item) => item.professional_id))];
-    const { data: professionals, error: professionalsError } = await supabase
-      .from("professionals")
-      .select(
-        "id, headline, categories(name), profiles!professionals_user_id_fkey(full_name)"
-      )
-      .in("id", professionalIds);
+    const attemptIds = ownAttempts.map((item) => item.id);
+    const [professionalResult, reviewResult] = await Promise.all([
+      supabase
+        .from("professionals")
+        .select(
+          "id, headline, categories(name), profiles!professionals_user_id_fkey(full_name)"
+        )
+        .in("id", professionalIds),
+      supabase
+        .from("reviews")
+        .select(REVIEW_FIELDS)
+        .eq("client_id", user.id)
+        .in("contact_attempt_id", attemptIds)
+        .not("overall_rating", "is", null)
+        .is("removed_at", null),
+    ]);
 
     if (!isCurrent()) return;
     const byId = new Map(
-      ((professionals ?? []) as unknown as Profesional[]).map((pro) => [pro.id, pro])
+      ((professionalResult.data ?? []) as unknown as Profesional[]).map((pro) => [pro.id, pro])
     );
+    const reviewByAttemptId = new Map<string, EditableProfessionalReview>();
+    for (const row of reviewResult.data ?? []) {
+      if (
+        row.contact_attempt_id &&
+        row.overall_rating !== null &&
+        row.edit_count !== null
+      ) {
+        reviewByAttemptId.set(row.contact_attempt_id, {
+          id: row.id,
+          overall_rating: row.overall_rating,
+          comment: row.comment,
+          created_at: row.created_at,
+          edit_count: row.edit_count,
+        });
+      }
+    }
     setItems(ownAttempts.map((item) => ({
       ...item,
       profesional: byId.get(item.professional_id) ?? null,
+      calificacion: reviewResult.error
+        ? null
+        : reviewByAttemptId.get(item.id) ?? null,
     })));
-    if (professionalsError) {
+    if (professionalResult.error) {
       setProfileWarning(
         "No pudimos cargar la disponibilidad de algunos perfiles. Es posible que no estén disponibles."
+      );
+    }
+    if (reviewResult.error) {
+      setRatingWarning(
+        "No pudimos cargar tus calificaciones. La edición está deshabilitada hasta poder verificarlas."
       );
     }
     setLoading(false);
@@ -118,6 +161,7 @@ export default function ContactosPage() {
       setItems([]);
       setError(null);
       setProfileWarning(null);
+      setRatingWarning(null);
       setActionError(null);
       if (!session?.user) {
         setLoading(true);
@@ -162,6 +206,45 @@ export default function ContactosPage() {
     }
   }
 
+  async function refreshOwnReview(attemptId: string) {
+    const supabase = createClient();
+    const { data: authData, error: authError } = await supabase.auth.getUser();
+    if (authError || !authData.user) {
+      setRatingWarning("Iniciá sesión nuevamente para consultar tu calificación.");
+      return;
+    }
+
+    const { data, error: reviewError } = await supabase
+      .from("reviews")
+      .select(REVIEW_FIELDS)
+      .eq("client_id", authData.user.id)
+      .eq("contact_attempt_id", attemptId)
+      .not("overall_rating", "is", null)
+      .is("removed_at", null)
+      .maybeSingle();
+
+    if (reviewError) {
+      setRatingWarning(
+        "No pudimos actualizar tu calificación. La edición está deshabilitada hasta poder verificarla."
+      );
+      return;
+    }
+
+    setRatingWarning(null);
+    const ownReview = data && data.overall_rating !== null
+      ? {
+          id: data.id,
+          overall_rating: data.overall_rating,
+          comment: data.comment,
+          created_at: data.created_at,
+          edit_count: data.edit_count,
+        }
+      : null;
+    setItems((current) => current.map((item) =>
+      item.id === attemptId ? { ...item, calificacion: ownReview } : item
+    ));
+  }
+
   const mainClass =
     "mx-auto flex min-h-screen w-full max-w-5xl flex-col gap-5 bg-[#f4f6f6] p-4 text-[#14272b] sm:p-6";
   const linkClass = "font-bold text-[#0f5c5c] underline";
@@ -189,6 +272,11 @@ export default function ContactosPage() {
       {profileWarning && (
         <p role="status" className="rounded-xl bg-white p-4 text-sm text-[#55666a]">
           {profileWarning}
+        </p>
+      )}
+      {ratingWarning && (
+        <p role="alert" className="rounded-xl bg-white p-4 text-sm text-red-700">
+          {ratingWarning}
         </p>
       )}
       {actionError && (
@@ -242,6 +330,25 @@ export default function ContactosPage() {
                     Este perfil no está disponible en este momento.
                   </p>
                 )}
+
+                {ratingWarning ? (
+                  <p role="status" className="text-sm text-[#55666a]">
+                    No se puede editar hasta cargar correctamente tu calificación.
+                  </p>
+                ) : item.calificacion ? (
+                  <div className="rounded-xl border border-[#dde4e4] p-3">
+                    <h3 className="mb-2 font-bold">Mi calificación</h3>
+                    <ProfessionalReviewEditor
+                      review={item.calificacion}
+                      onSaved={() => refreshOwnReview(item.id)}
+                      onRefresh={() => refreshOwnReview(item.id)}
+                    />
+                  </div>
+                ) : confirmed ? (
+                  <p role="status" className="text-sm text-[#55666a]">
+                    No hay una calificación activa para este contacto.
+                  </p>
+                ) : null}
 
                 <div className="mt-auto flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                   {available ? (

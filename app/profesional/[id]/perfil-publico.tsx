@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Avatar from "@/components/Avatar";
+import ProfessionalReviewEditor from "@/components/reviews/ProfessionalReviewEditor";
+import { StarRatingInput } from "@/components/reviews/ProfessionalReviewEditor";
 
 type Profesional = {
   id: string;
@@ -12,6 +14,7 @@ type Profesional = {
   headline: string | null;
   description: string | null;
   is_verified: boolean;
+  is_suspended: boolean;
   categories: { name: string; grupo: string } | null;
   profiles: {
     full_name: string | null;
@@ -38,16 +41,16 @@ type Referencia = {
 };
 type Resumen = {
   total: number;
-  avg_price: number;
-  avg_reliability: number;
-  avg_quality: number;
-  avg_overall: number;
+  avg_overall: number | null;
 };
 type Resena = {
   id: string;
-  price: number;
-  reliability: number;
-  quality: number;
+  contact_attempt_id: string | null;
+  overall_rating: number | null;
+  edit_count?: number;
+  price: number | null;
+  reliability: number | null;
+  quality: number | null;
   comment: string | null;
   created_at: string;
   profiles: { full_name: string | null } | null;
@@ -89,38 +92,17 @@ function Barra({ label, value }: { label: string; value: number }) {
   );
 }
 
-function StarInput({
-  label,
-  hint,
-  value,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: number;
-  onChange: (n: number) => void;
-}) {
+function Estrellas({ value }: { value: number }) {
+  const rating = Math.max(0, Math.min(5, Math.round(value)));
   return (
-    <div className="flex flex-col gap-1">
-      <div className="font-bold">{label}</div>
-      <div className="text-sm text-[#55666a]">{hint}</div>
-      <div className="flex gap-1">
-        {[1, 2, 3, 4, 5].map((n) => (
-          <button
-            type="button"
-            key={n}
-            aria-label={`${n} de 5`}
-            aria-pressed={value >= n}
-            onClick={() => onChange(n)}
-            className={`h-11 w-11 text-3xl leading-none ${
-              value >= n ? "text-[#e9a23b]" : "text-[#8a9a9c]"
-            }`}
-          >
-            {value >= n ? "★" : "☆"}
-          </button>
-        ))}
-      </div>
-    </div>
+    <span
+      className="whitespace-nowrap text-[#e9a23b]"
+      role="img"
+      aria-label={rating + " de 5 estrellas"}
+    >
+      {"★".repeat(rating)}
+      {"☆".repeat(5 - rating)}
+    </span>
   );
 }
 
@@ -144,9 +126,17 @@ export default function PerfilPublicoPage() {
   const [contactActionLabel, setContactActionLabel] = useState("Abrir contacto");
   const [summary, setSummary] = useState<Resumen | null>(null);
   const [reviews, setReviews] = useState<Resena[]>([]);
+  const [legacyReviews, setLegacyReviews] = useState<Resena[]>([]);
+  const [ownReview, setOwnReview] = useState<Resena | null>(null);
+  const [ratingsLoading, setRatingsLoading] = useState(true);
+  const [contactLookupLoading, setContactLookupLoading] = useState(true);
+  const [reviewLookupLoading, setReviewLookupLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [reviewsError, setReviewsError] = useState<string | null>(null);
+  const [legacyReviewsError, setLegacyReviewsError] = useState<string | null>(null);
+  const [contactLookupError, setContactLookupError] = useState<string | null>(null);
+  const [reviewLookupError, setReviewLookupError] = useState<string | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
-  const [hiringId, setHiringId] = useState<string | null>(null);
-  const [reviewed, setReviewed] = useState(false);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
 
@@ -159,12 +149,15 @@ export default function PerfilPublicoPage() {
   const [reportSending, setReportSending] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
 
-  const [price, setPrice] = useState(0);
-  const [reliability, setReliability] = useState(0);
-  const [quality, setQuality] = useState(0);
   const [comment, setComment] = useState("");
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [overallRating, setOverallRating] = useState(0);
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+  const [publishSuccess, setPublishSuccess] = useState<string | null>(null);
+  const [duplicateBlocked, setDuplicateBlocked] = useState(false);
+  const [authorizationBlocked, setAuthorizationBlocked] = useState(false);
+  const publishLock = useRef(false);
+  const [editSuccess, setEditSuccess] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -173,7 +166,7 @@ export default function PerfilPublicoPage() {
       const { data } = await supabase
         .from("professionals")
         .select(
-          "id, user_id, headline, description, is_verified, categories(name, grupo), profiles(full_name, country, province, city, avatar_path)"
+          "id, user_id, headline, description, is_verified, is_suspended, categories(name, grupo), profiles(full_name, country, province, city, avatar_path)"
         )
         .eq("id", id)
         .maybeSingle();
@@ -184,22 +177,65 @@ export default function PerfilPublicoPage() {
       }
       setPro(data as unknown as Profesional);
 
-      const { data: sum } = await supabase
+      setRatingsLoading(true);
+      setSummary(null);
+      setReviews([]);
+      setLegacyReviews([]);
+      setSummaryError(null);
+      setReviewsError(null);
+      setLegacyReviewsError(null);
+      setContactLookupLoading(true);
+      setReviewLookupLoading(true);
+      setContactLookupError(null);
+      setReviewLookupError(null);
+      setOwnReview(null);
+      setContactAttempt(null);
+      setContactReused(false);
+      setUserId(null);
+
+      const { data: sum, error: summaryLoadError } = await supabase
         .from("professional_ratings")
-        .select("total, avg_price, avg_reliability, avg_quality, avg_overall")
+        .select("total, avg_overall")
         .eq("professional_id", id)
         .maybeSingle();
-      setSummary(sum as Resumen | null);
+      if (summaryLoadError) {
+        setSummaryError("No pudimos cargar el promedio de calificaciones.");
+      } else {
+        setSummary(sum as Resumen | null);
+      }
 
-      const { data: revs } = await supabase
+      const reviewFields =
+        "id, contact_attempt_id, overall_rating, price, reliability, quality, comment, created_at, profiles(full_name)";
+      const { data: b3Reviews, error: b3ReviewsError } = await supabase
         .from("reviews")
-        .select(
-          "id, price, reliability, quality, comment, created_at, profiles(full_name)"
-        )
+        .select(reviewFields)
         .eq("professional_id", id)
+        .not("contact_attempt_id", "is", null)
+        .not("overall_rating", "is", null)
+        .is("removed_at", null)
         .order("created_at", { ascending: false })
         .limit(10);
-      setReviews((revs ?? []) as unknown as Resena[]);
+      if (b3ReviewsError) {
+        setReviewsError("No pudimos cargar las calificaciones recientes.");
+      } else {
+        setReviews((b3Reviews ?? []) as unknown as Resena[]);
+      }
+
+      const { data: historicalReviews, error: historicalReviewsError } =
+        await supabase
+          .from("reviews")
+          .select(reviewFields)
+          .eq("professional_id", id)
+          .is("contact_attempt_id", null)
+          .is("removed_at", null)
+          .order("created_at", { ascending: false })
+          .limit(10);
+      if (historicalReviewsError) {
+        setLegacyReviewsError("No pudimos cargar las opiniones anteriores.");
+      } else {
+        setLegacyReviews((historicalReviews ?? []) as unknown as Resena[]);
+      }
+      setRatingsLoading(false);
 
       const { data: photoData } = await supabase
         .from("work_photos")
@@ -227,28 +263,32 @@ export default function PerfilPublicoPage() {
           .order("created_at", { ascending: true });
         setRefs(refData ?? []);
 
-        const { data: attemptData } = await supabase
+        const { data: attemptData, error: attemptError } = await supabase
           .from("professional_contact_attempts")
           .select("id, attempted_at, confirmed_at")
           .eq("professional_id", id)
           .maybeSingle();
-        setContactAttempt(attemptData as IntentoContacto | null);
+        if (attemptError) {
+          setContactLookupError("No pudimos verificar tu contacto con este profesional.");
+        } else {
+          setContactAttempt(attemptData as IntentoContacto | null);
+        }
         setContactReused(!!attemptData);
+        setContactLookupLoading(false);
 
-        const { data: hiring } = await supabase
-          .from("hirings")
-          .select("id")
-          .eq("professional_id", id)
-          .maybeSingle();
-        setHiringId(hiring?.id ?? null);
-
-        const { data: mine } = await supabase
+        const { data: mine, error: mineError } = await supabase
           .from("reviews")
-          .select("id")
+          .select(`${reviewFields}, edit_count`)
           .eq("professional_id", id)
           .eq("client_id", user.id)
+          .is("removed_at", null)
           .maybeSingle();
-        setReviewed(!!mine);
+        if (mineError) {
+          setReviewLookupError("No pudimos comprobar si ya existe una reseña tuya.");
+        } else {
+          setOwnReview(mine as unknown as Resena | null);
+        }
+        setReviewLookupLoading(false);
 
         const { data: myReport } = await supabase
           .from("reports")
@@ -257,6 +297,12 @@ export default function PerfilPublicoPage() {
           .eq("reporter_id", user.id)
           .maybeSingle();
         setReported(!!myReport);
+      } else {
+        setUserId(null);
+        setContactAttempt(null);
+        setContactLookupLoading(false);
+        setOwnReview(null);
+        setReviewLookupLoading(false);
       }
       setLoading(false);
     }
@@ -330,6 +376,8 @@ export default function PerfilPublicoPage() {
       }
 
       setContact({ phone: result.phone, whatsapp: result.whatsapp });
+      setContactLookupError(null);
+      setContactLookupLoading(false);
       setContactAttempt({
         id: result.attempt_id,
         attempted_at: result.attempted_at,
@@ -378,6 +426,7 @@ export default function PerfilPublicoPage() {
         return;
       }
 
+      setContactLookupError(null);
       setContactAttempt({ ...contactAttempt, confirmed_at: data as string });
     } catch {
       setContactError("No pudimos confirmar el contacto. Probá nuevamente.");
@@ -386,36 +435,120 @@ export default function PerfilPublicoPage() {
     }
   }
 
-  async function handleReview(e: React.FormEvent<HTMLFormElement>) {
+  async function handlePublishReview(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!userId || !hiringId) return;
-    if (!price || !reliability || !quality) {
-      setError("Elegí una calificación en los tres criterios.");
+    if (
+      publishLock.current ||
+      !userId ||
+      !pro ||
+      pro.user_id === userId ||
+      pro.is_suspended ||
+      ratingsLoading ||
+      summaryError ||
+      !contactAttempt?.confirmed_at ||
+      contactLookupLoading ||
+      contactLookupError ||
+      reviewLookupLoading ||
+      reviewLookupError ||
+      reviewsError ||
+      legacyReviewsError ||
+      ownReview ||
+      duplicateBlocked ||
+      authorizationBlocked ||
+      publishSuccess
+    ) {
       return;
     }
-    setError(null);
-    setSending(true);
-    const { error: reviewError } = await createClient()
-      .from("reviews")
-      .insert({
-        hiring_id: hiringId,
-        professional_id: id,
-        client_id: userId,
-        price,
-        reliability,
-        quality,
-        comment: comment.trim() || null,
-      });
-    setSending(false);
-    if (reviewError) {
-      setError(reviewError.message);
+
+    const normalizedComment = comment.trim();
+    if (!Number.isInteger(overallRating) || overallRating < 1 || overallRating > 5) {
+      setPublishError("Elegí una calificación de una a cinco estrellas.");
       return;
     }
-    setPrice(0);
-    setReliability(0);
-    setQuality(0);
-    setComment("");
-    setVersion((v) => v + 1);
+    if (Array.from(normalizedComment).length > 500) {
+      setPublishError("El comentario no puede superar los 500 caracteres.");
+      return;
+    }
+
+    publishLock.current = true;
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const { data: reviewId, error: reviewError } = await createClient().rpc(
+        "create_professional_review",
+        {
+          p_contact_attempt_id: contactAttempt.id,
+          p_overall_rating: overallRating,
+          p_comment: normalizedComment || null,
+        }
+      );
+
+      if (reviewError) {
+        if (reviewError.code === "23505") {
+          setDuplicateBlocked(true);
+          setPublishError(
+            "Ya existe una reseña para este profesional. No se puede publicar otra."
+          );
+        } else if (reviewError.code === "42501") {
+          setAuthorizationBlocked(true);
+          setPublishError(
+            "No pudimos autorizar la publicación. Verificá que el contacto esté confirmado y el perfil disponible."
+          );
+        } else if (reviewError.code === "28000") {
+          setPublishError("Tu sesión venció. Iniciá sesión nuevamente para publicar.");
+        } else if (reviewError.code === "22023") {
+          setPublishError(reviewError.message);
+        } else if (reviewError.code === "P0002") {
+          setAuthorizationBlocked(true);
+          setPublishError("Este perfil profesional ya no está disponible.");
+        } else {
+          setPublishError("No pudimos publicar la calificación. Probá nuevamente.");
+        }
+        setReviewLookupLoading(true);
+        setRatingsLoading(true);
+        setSummary(null);
+        setReviews([]);
+        setLegacyReviews([]);
+        setOwnReview(null);
+        setVersion((current) => current + 1);
+        return;
+      }
+
+      if (!reviewId) {
+        setPublishError("No recibimos la confirmación de publicación. Actualizaremos el perfil.");
+        setReviewLookupLoading(true);
+        setRatingsLoading(true);
+        setSummary(null);
+        setReviews([]);
+        setLegacyReviews([]);
+        setOwnReview(null);
+        setVersion((current) => current + 1);
+        return;
+      }
+
+      setPublishSuccess("Tu calificación se publicó correctamente.");
+      setOverallRating(0);
+      setComment("");
+      setReviewLookupLoading(true);
+      setRatingsLoading(true);
+      setSummary(null);
+      setReviews([]);
+      setLegacyReviews([]);
+      setOwnReview(null);
+      setVersion((current) => current + 1);
+    } catch {
+      setPublishError("No pudimos confirmar la publicación. Estamos actualizando el perfil.");
+      setReviewLookupLoading(true);
+      setRatingsLoading(true);
+      setSummary(null);
+      setReviews([]);
+      setLegacyReviews([]);
+      setOwnReview(null);
+      setVersion((current) => current + 1);
+    } finally {
+      publishLock.current = false;
+      setPublishing(false);
+    }
   }
 
   async function handleReport(e: React.FormEvent<HTMLFormElement>) {
@@ -479,6 +612,46 @@ export default function PerfilPublicoPage() {
 
   const loggedIn = userId !== null;
   const isOwner = pro !== null && pro.user_id === userId;
+  const visibleReviews =
+    ownReview?.contact_attempt_id && !reviews.some((review) => review.id === ownReview.id)
+      ? [ownReview, ...reviews]
+      : reviews;
+  const visibleLegacyReviews =
+    ownReview && ownReview.contact_attempt_id === null &&
+    !legacyReviews.some((review) => review.id === ownReview.id)
+      ? [ownReview, ...legacyReviews]
+      : legacyReviews;
+  const eligibilityLoading =
+    ratingsLoading || contactLookupLoading || reviewLookupLoading;
+  const eligibilityError =
+    summaryError ||
+    reviewsError ||
+    legacyReviewsError ||
+    contactLookupError ||
+    reviewLookupError;
+  function refreshProfileRatings() {
+    setReviewLookupLoading(true);
+    setRatingsLoading(true);
+    setSummary(null);
+    setReviews([]);
+    setLegacyReviews([]);
+    setOwnReview(null);
+    setVersion((current) => current + 1);
+  }
+
+  const canPublishRating =
+    loggedIn &&
+    !isOwner &&
+    pro !== null &&
+    !pro.is_suspended &&
+    Boolean(contactAttempt?.confirmed_at) &&
+    !eligibilityLoading &&
+    !eligibilityError &&
+    !ownReview &&
+    !duplicateBlocked &&
+    !authorizationBlocked &&
+    !publishSuccess &&
+    !publishing;
 
   const mainClass =
     "mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]";
@@ -523,15 +696,20 @@ export default function PerfilPublicoPage() {
             Verificado
           </span>
         )}
-        {summary && (
-          <p className="text-lg font-bold">
-            <span className="text-[#e9a23b]">★</span> {fmt(summary.avg_overall)}{" "}
-            <span className="text-sm font-normal text-[#55666a]">
-              ({summary.total}{" "}
-              {summary.total === 1 ? "calificación" : "calificaciones"})
-            </span>
-          </p>
-        )}
+        {!ratingsLoading &&
+          !summaryError &&
+          summary &&
+          summary.total > 0 &&
+          summary.avg_overall !== null && (
+            <p className="flex flex-wrap items-center justify-center gap-2 text-lg font-bold">
+              <Estrellas value={summary.avg_overall} />
+              <span>{Math.round(summary.avg_overall)}/5</span>
+              <span className="text-sm font-normal text-[#55666a]">
+                ({summary.total}{" "}
+                {summary.total === 1 ? "calificación" : "calificaciones"})
+              </span>
+            </p>
+          )}
       </div>
 
       {pro.description && (
@@ -577,82 +755,244 @@ export default function PerfilPublicoPage() {
 
       <div className={cardClass}>
         <h2 className="font-bold">Calificaciones</h2>
-        {!summary ? (
-          <p className="text-sm text-[#55666a]">Todavía no tiene calificaciones.</p>
-        ) : (
-          <>
-            <Barra label="Precio" value={summary.avg_price} />
-            <Barra label="Confiabilidad" value={summary.avg_reliability} />
-            <Barra label="Calidad" value={summary.avg_quality} />
-          </>
+        <p className="text-sm text-[#55666a]">
+          Promedio de clientes que confirmaron su contacto.
+        </p>
+        {ratingsLoading && (
+          <p role="status" className="text-sm text-[#55666a]">
+            Cargando calificaciones...
+          </p>
         )}
-        {reviews
-          .filter((r) => r.comment)
-          .map((r) => (
-            <div key={r.id} className="mt-2 border-t border-[#dde4e4] pt-3">
-              <p className="text-[15px]">“{r.comment}”</p>
-              <p className="mt-1 text-sm text-[#55666a]">
-                {r.profiles?.full_name?.split(" ")[0] ?? "Cliente"} ·{" "}
-                {new Date(r.created_at).toLocaleDateString("es-AR")}
-              </p>
+        {!ratingsLoading && summaryError && (
+          <p role="alert" className="text-sm text-red-700">{summaryError}</p>
+        )}
+        {!ratingsLoading && !summaryError && (summary?.total ?? 0) === 0 && (
+          <p className="text-sm text-[#55666a]">
+            Este profesional todavía no recibió calificaciones.
+          </p>
+        )}
+        {!ratingsLoading && !summaryError && (summary?.total ?? 0) > 0 &&
+          summary?.avg_overall === null && (
+            <p role="status" className="text-sm text-[#55666a]">
+              El promedio todavía no está disponible.
+            </p>
+          )}
+        {!ratingsLoading && !reviewsError && reviews.length === 0 &&
+          (summary?.total ?? 0) > 0 && (
+            <p className="text-sm text-[#55666a]">
+              Todavía no hay comentarios para mostrar.
+            </p>
+          )}
+        {!ratingsLoading && reviewsError && (
+          <p role="alert" className="text-sm text-red-700">{reviewsError}</p>
+        )}
+        {visibleReviews.map((review) => (
+          <article key={review.id} className="mt-2 flex flex-col gap-2 border-t border-[#dde4e4] pt-3">
+            <div className="flex flex-wrap items-center gap-2">
+              {review.overall_rating !== null && (
+                <>
+                  <Estrellas value={review.overall_rating} />
+                  <span className="text-sm font-semibold">
+                    {review.overall_rating}/5
+                  </span>
+                </>
+              )}
+              {review.id === ownReview?.id && (
+                <span className="rounded-full bg-[#dff0ec] px-2 py-1 text-xs text-[#0b4a4a]">
+                  Tu calificación
+                </span>
+              )}
+              <span className="text-sm text-[#55666a]">
+                {review.profiles?.full_name?.split(" ")[0] ?? "Cliente"} ·{" "}
+                {new Date(review.created_at).toLocaleDateString("es-AR")}
+              </span>
             </div>
-          ))}
+            {review.comment && (
+              <p className="whitespace-pre-line break-words text-[15px]">
+                “{review.comment}”
+              </p>
+            )}
+          </article>
+        ))}
       </div>
 
-      {loggedIn && !isOwner && hiringId && !reviewed && (
+      <div className={cardClass}>
+        <h2 className="font-bold">Opiniones anteriores</h2>
+        <p className="text-sm text-[#55666a]">
+          Estas opiniones conservan sus criterios originales y se muestran por
+          separado del promedio actual.
+        </p>
+        {ratingsLoading && (
+          <p role="status" className="text-sm text-[#55666a]">
+            Cargando opiniones anteriores...
+          </p>
+        )}
+        {!ratingsLoading && legacyReviewsError && (
+          <p role="alert" className="text-sm text-red-700">
+            {legacyReviewsError}
+          </p>
+        )}
+        {!ratingsLoading && !legacyReviewsError && legacyReviews.length === 0 && (
+          <p className="text-sm text-[#55666a]">
+            Todavía no hay opiniones anteriores para mostrar.
+          </p>
+        )}
+        {visibleLegacyReviews.map((review) => (
+          <article key={review.id} className="mt-2 flex flex-col gap-3 border-t border-[#dde4e4] pt-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-sm font-medium">
+                {review.profiles?.full_name?.split(" ")[0] ?? "Cliente"} ·{" "}
+                {new Date(review.created_at).toLocaleDateString("es-AR")}
+              </p>
+              <span className="rounded-full bg-[#edf1f1] px-2 py-1 text-xs text-[#55666a]">
+                Anterior
+              </span>
+            </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              {review.price !== null && (
+                <Barra label="Precio" value={review.price} />
+              )}
+              {review.reliability !== null && (
+                <Barra label="Confiabilidad" value={review.reliability} />
+              )}
+              {review.quality !== null && (
+                <Barra label="Calidad" value={review.quality} />
+              )}
+            </div>
+            {review.comment && (
+              <p className="whitespace-pre-line break-words text-[15px]">
+                “{review.comment}”
+              </p>
+            )}
+          </article>
+        ))}
+      </div>
+
+      {loggedIn && !isOwner && ownReview?.contact_attempt_id === null && (
         <div className={cardClass}>
-          <form onSubmit={handleReview} className="flex flex-col gap-4">
-              <h2 className="font-bold">Calificá el trabajo</h2>
-              <StarInput
-                label="Precio"
-                hint="¿Cobró un precio justo?"
-                value={price}
-                onChange={setPrice}
-              />
-              <StarInput
-                label="Confiabilidad"
-                hint="¿Cumplió y fue puntual?"
-                value={reliability}
-                onChange={setReliability}
-              />
-              <StarInput
-                label="Calidad"
-                hint="¿El trabajo quedó bien hecho?"
-                value={quality}
-                onChange={setQuality}
-              />
-              <label className="flex flex-col gap-1.5 text-sm font-medium">
-                Comentario (opcional)
-                <textarea
-                  className="h-24 rounded-xl border border-[#b9c7c7] bg-white px-4 py-3 text-base"
-                  maxLength={500}
-                  value={comment}
-                  onChange={(e) => setComment(e.target.value)}
-                  placeholder="Contá cómo fue el trabajo"
-                />
-              </label>
-              <button
-                type="submit"
-                disabled={sending}
-                className="h-12 rounded-2xl bg-[#0f5c5c] font-bold text-white disabled:opacity-60"
-              >
-                {sending ? "Enviando..." : "Enviar calificación"}
-              </button>
-          </form>
-          {error && <p className="text-sm text-red-700">{error}</p>}
+          <p role="status" className="text-sm text-[#55666a]">
+            Ya dejaste una opinión anterior para este profesional. Como solo se
+            permite una reseña por persona y profesional, no podés publicar otra.
+          </p>
         </div>
       )}
 
-      {loggedIn && !isOwner && hiringId && reviewed && (
+      {loggedIn &&
+        !isOwner &&
+        (contactAttempt?.confirmed_at ||
+          (ownReview?.contact_attempt_id && ownReview.overall_rating !== null)) && (
         <div className={cardClass}>
-          <p className="text-sm font-medium text-[#0f5c5c]">
-            Ya calificaste este trabajo. ¡Gracias por tu opinión!
-          </p>
+          <h2 className="font-bold">
+            {ownReview?.contact_attempt_id ? "Tu calificación" : "Calificá tu experiencia"}
+          </h2>
+
+          {publishSuccess && (
+            <p role="status" className="text-sm font-medium text-[#0f5c5c]">
+              {publishSuccess}
+            </p>
+          )}
+          {editSuccess && (
+            <p role="status" className="text-sm font-medium text-[#0f5c5c]">
+              {editSuccess}
+            </p>
+          )}
+          {pro.is_suspended && !ownReview?.contact_attempt_id && (
+            <p role="status" className="text-sm text-[#55666a]">
+              Este perfil no está recibiendo nuevas calificaciones.
+            </p>
+          )}
+          {!pro.is_suspended && eligibilityLoading && !ownReview && (
+            <p role="status" className="text-sm text-[#55666a]">
+              Verificando que puedas publicar...
+            </p>
+          )}
+          {!pro.is_suspended && eligibilityError && (
+            <p role="alert" className="text-sm text-red-700">
+              No pudimos comprobar si ya existe una calificación. Actualizá la
+              página antes de intentar publicar.
+            </p>
+          )}
+          {ownReview?.contact_attempt_id && (
+            ownReview.overall_rating !== null &&
+            ownReview.edit_count !== undefined && (
+              <ProfessionalReviewEditor
+                review={{
+                  id: ownReview.id,
+                  overall_rating: ownReview.overall_rating,
+                  comment: ownReview.comment,
+                  created_at: ownReview.created_at,
+                  edit_count: ownReview.edit_count,
+                }}
+                onSaved={() => {
+                  setEditSuccess("Tu calificación se actualizó correctamente.");
+                  refreshProfileRatings();
+                }}
+                onRefresh={refreshProfileRatings}
+              />
+            )
+          )}
+          {duplicateBlocked && (
+            <p role="alert" className="text-sm text-red-700">
+              Ya existe una reseña para este profesional. No se puede publicar otra.
+            </p>
+          )}
+          {canPublishRating && (
+            <form onSubmit={handlePublishReview} className="flex flex-col gap-4">
+              <StarRatingInput
+                label="Calificación general"
+                hint="Elegí de una a cinco estrellas."
+                value={overallRating}
+                disabled={publishing}
+                onChange={(value) => {
+                  setOverallRating(value);
+                  setPublishError(null);
+                }}
+              />
+              <label className="flex w-full flex-col gap-1.5 text-sm font-medium">
+                Comentario (opcional)
+                <textarea
+                  className="min-h-24 w-full rounded-xl border border-[#b9c7c7] bg-white px-4 py-3 text-base focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5c5c]"
+                  maxLength={1000}
+                  value={comment}
+                  onChange={(event) => {
+                    const nextComment = event.target.value;
+                    if (Array.from(nextComment).length <= 500) {
+                      setComment(nextComment);
+                      setPublishError(null);
+                    }
+                  }}
+                  placeholder="Contá cómo fue tu experiencia"
+                  aria-describedby="review-comment-count"
+                  disabled={publishing}
+                />
+                <span id="review-comment-count" aria-live="polite" className="text-right text-xs text-[#55666a]">
+                  {Array.from(comment).length}/500 caracteres
+                </span>
+              </label>
+              <button
+                type="submit"
+                disabled={publishing || overallRating === 0}
+                className="min-h-12 rounded-2xl bg-[#0f5c5c] px-4 font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5c5c] disabled:opacity-60"
+              >
+                {publishing ? "Publicando..." : "Publicar calificación"}
+              </button>
+            </form>
+          )}
+          {publishError && !duplicateBlocked && (
+            <p role="alert" className="text-sm text-red-700">
+              {publishError}
+            </p>
+          )}
         </div>
       )}
 
       <div className={cardClass}>
         <h2 className="font-bold">Contacto</h2>
+        {contactLookupError && (
+          <p role="alert" className="text-sm text-red-700">
+            No pudimos comprobar tu contacto anterior con este profesional.
+          </p>
+        )}
         {!loggedIn && (
           <p className="text-sm text-[#55666a]">
             Para contactar a esta persona,{" "}
@@ -710,8 +1050,7 @@ export default function PerfilPublicoPage() {
               </button>
             ) : (
               <p className="text-sm font-medium text-[#0f5c5c]">
-                Confirmaste manualmente el contacto. La calificación estará
-                disponible en una fase posterior.
+                Confirmaste manualmente que contactaste a esta persona.
               </p>
             )}
             <button
