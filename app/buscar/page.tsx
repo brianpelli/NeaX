@@ -39,6 +39,21 @@ export default function BuscarPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const availableGroups = Object.entries(GRUPOS).filter(([groupKey]) =>
+    categories.some((category) => category.is_active && category.grupo === groupKey)
+  );
+  const selectedGroup = availableGroups.some(([groupKey]) => groupKey === group)
+    ? group
+    : "";
+  const selectedCategoryId = categories.some(
+    (category) =>
+      category.is_active &&
+      String(category.id) === categoryId &&
+      (!selectedGroup || category.grupo === selectedGroup)
+  )
+    ? categoryId
+    : "";
+
   useEffect(() => {
     let cancelled = false;
 
@@ -82,11 +97,11 @@ export default function BuscarPage() {
         .order("total_reviews", { ascending: false })
         .limit(50);
 
-      if (categoryId) {
-        query = query.eq("category_id", Number(categoryId));
-      } else if (group) {
+      if (selectedCategoryId) {
+        query = query.eq("category_id", Number(selectedCategoryId));
+      } else if (selectedGroup) {
         const groupCategoryIds = categories
-          .filter((category) => category.grupo === group && category.is_active)
+          .filter((category) => category.grupo === selectedGroup && category.is_active)
           .map((category) => category.id);
 
         if (groupCategoryIds.length === 0) {
@@ -116,12 +131,12 @@ export default function BuscarPage() {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [categoryId, categories, categoriesLoading, city, group]);
+  }, [selectedCategoryId, categories, categoriesLoading, city, selectedGroup]);
 
   const inputClass =
     "h-12 rounded-xl border border-[#b9c7c7] bg-white px-4 text-base text-[#14272b] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5c5c]";
   const groupCategories = categories.filter(
-    (category) => !group || category.grupo === group
+    (category) => category.is_active && (!selectedGroup || category.grupo === selectedGroup)
   );
   const specialtyPlaceholder = categoriesLoading
     ? "Cargando especialidades..."
@@ -143,7 +158,7 @@ export default function BuscarPage() {
           <select
             aria-label="Rubro"
             className={inputClass}
-            value={group}
+            value={selectedGroup}
             disabled={categoriesLoading || Boolean(categoriesError)}
             onChange={(event) => {
               setGroup(event.target.value);
@@ -151,7 +166,7 @@ export default function BuscarPage() {
             }}
           >
             <option value="">Todos los rubros</option>
-            {Object.entries(GRUPOS).map(([value, label]) => (
+            {availableGroups.map(([value, label]) => (
               <option key={value} value={value}>
                 {label}
               </option>
@@ -164,7 +179,7 @@ export default function BuscarPage() {
           <select
             aria-label="Oficio o especialidad"
             className={inputClass}
-            value={categoryId}
+            value={selectedCategoryId}
             disabled={categoriesLoading || Boolean(categoriesError) || groupCategories.length === 0}
             onChange={(event) => setCategoryId(event.target.value)}
           >
@@ -190,7 +205,7 @@ export default function BuscarPage() {
           Cargando rubros y especialidades...
         </p>
       )}
-      {!categoriesLoading && !categoriesError && group && groupCategories.length === 0 && (
+      {!categoriesLoading && !categoriesError && selectedGroup && groupCategories.length === 0 && (
         <p role="status" className="text-sm text-[#55666a]">
           Este rubro todavía no tiene especialidades activas.
         </p>
@@ -208,7 +223,7 @@ export default function BuscarPage() {
 
       {error && <p className="text-sm text-red-700">{error}</p>}
       {loading && <p className="text-sm text-[#55666a]">Buscando...</p>}
-      {!loading && !error && results.length === 0 && !(group && groupCategories.length === 0) && (
+      {!loading && !error && results.length === 0 && !(selectedGroup && groupCategories.length === 0) && (
         <p className="text-sm text-[#55666a]">
           No encontramos profesionales con esos filtros.
         </p>

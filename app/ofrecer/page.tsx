@@ -27,6 +27,7 @@ export default function OfrecerPage() {
   const [phone, setPhone] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
   const [loading, setLoading] = useState(true);
+  const [categoriesError, setCategoriesError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -42,11 +43,16 @@ export default function OfrecerPage() {
         return;
       }
 
-      const { data: cats } = await supabase
+      const { data: cats, error: categoriesLoadError } = await supabase
         .from("categories")
         .select("id, name, grupo")
+        .eq("is_active", true)
         .order("name");
-      setCategories(cats ?? []);
+      if (categoriesLoadError) {
+        setCategoriesError("No pudimos cargar los rubros y especialidades.");
+      } else {
+        setCategories(cats ?? []);
+      }
 
       const { data: profile } = await supabase
         .from("profiles")
@@ -66,7 +72,12 @@ export default function OfrecerPage() {
         .maybeSingle();
       if (pro) {
 		setMyId(pro.id);
-        setCategoryId(String(pro.category_id ?? ""));
+        const existingCategoryId = String(pro.category_id ?? "");
+        setCategoryId(
+          cats?.some((category) => String(category.id) === existingCategoryId)
+            ? existingCategoryId
+            : ""
+        );
         setHeadline(pro.headline ?? "");
         setDescription(pro.description ?? "");
 
@@ -102,6 +113,9 @@ export default function OfrecerPage() {
     if (!user) {
       router.push("/login");
       return;
+    }
+    if (!categories.some((category) => String(category.id) === categoryId)) {
+      return fail("Elegí un rubro o especialidad activa.");
     }
 
     const { error: profileError } = await supabase
@@ -163,6 +177,9 @@ export default function OfrecerPage() {
 
   const esComida =
     categories.find((c) => String(c.id) === categoryId)?.grupo === "comida";
+  const availableGroups = Object.entries(GRUPOS).filter(([groupKey]) =>
+    categories.some((category) => category.grupo === groupKey)
+  );
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md md:max-w-3xl flex-col gap-5 bg-[#f4f6f6] p-6 text-[#14272b]">
@@ -176,10 +193,11 @@ export default function OfrecerPage() {
             className={inputClass}
             value={categoryId}
             onChange={(e) => setCategoryId(e.target.value)}
+            disabled={loading || Boolean(categoriesError) || categories.length === 0}
             required
           >
             <option value="">Elegí un rubro</option>
-            {Object.entries(GRUPOS).map(([grupo, titulo]) => (
+            {availableGroups.map(([grupo, titulo]) => (
               <optgroup key={grupo} label={titulo}>
                 {categories
                   .filter((c) => c.grupo === grupo)
@@ -279,6 +297,16 @@ export default function OfrecerPage() {
           </span>
         </label>
 
+        {categoriesError && (
+          <p role="alert" className="text-sm text-red-700">
+            {categoriesError}
+          </p>
+        )}
+        {!categoriesError && categories.length === 0 && (
+          <p role="status" className="text-sm text-[#55666a]">
+            No hay rubros con especialidades activas.
+          </p>
+        )}
         {error && <p className="text-sm text-red-700">{error}</p>}
         {saved && (
           <p className="text-sm font-medium text-[#0f5c5c]">
@@ -288,7 +316,12 @@ export default function OfrecerPage() {
 
         <button
           type="submit"
-          disabled={saving}
+          disabled={
+            saving ||
+            Boolean(categoriesError) ||
+            categories.length === 0 ||
+            !categories.some((category) => String(category.id) === categoryId)
+          }
           className="h-13 rounded-2xl bg-[#0f5c5c] text-lg font-bold text-white disabled:opacity-60"
         >
           {saving ? "Guardando..." : "Guardar perfil"}
