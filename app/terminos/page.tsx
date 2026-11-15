@@ -73,7 +73,7 @@ export default function TerminosPage() {
           </li>
           <li>
             Podemos ocultar o eliminar contenido que incumpla estos términos.
-            Las calificaciones enviadas no se pueden editar.
+            Cada persona puede editar su calificación hasta tres veces desde Mis contactos.
           </li>
         </ul>
       </Seccion>

@@ -5,7 +5,9 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import Avatar from "@/components/Avatar";
-import ProfessionalReviewEditor from "@/components/reviews/ProfessionalReviewEditor";
+import ProfessionalReviewEditor, {
+  type AccountSuspensionStatus,
+} from "@/components/reviews/ProfessionalReviewEditor";
 import { StarRatingInput } from "@/components/reviews/ProfessionalReviewEditor";
 
 type Profesional = {
@@ -44,16 +46,17 @@ type Resumen = {
   avg_overall: number | null;
 };
 type Resena = {
-  id: string;
-  contact_attempt_id: string | null;
-  overall_rating: number | null;
-  edit_count?: number;
-  price: number | null;
-  reliability: number | null;
-  quality: number | null;
-  comment: string | null;
-  created_at: string;
-  profiles: { full_name: string | null } | null;
+  id: string,
+  contact_attempt_id: string | null,
+  overall_rating: number | null,
+  edit_count?: number,
+  price: number | null,
+  reliability: number | null,
+  quality: number | null,
+  comment: string | null,
+  created_at: string,
+  full_name: string,
+  removed_at?: string | null,
 };
 
 function fmt(n: number) {
@@ -136,6 +139,8 @@ export default function PerfilPublicoPage() {
   const [legacyReviewsError, setLegacyReviewsError] = useState<string | null>(null);
   const [contactLookupError, setContactLookupError] = useState<string | null>(null);
   const [reviewLookupError, setReviewLookupError] = useState<string | null>(null);
+  const [suspensionStatus, setSuspensionStatus] =
+    useState<AccountSuspensionStatus>("checking");
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
@@ -162,6 +167,7 @@ export default function PerfilPublicoPage() {
   useEffect(() => {
     async function load() {
       const supabase = createClient();
+      setSuspensionStatus("checking");
 
       const { data } = await supabase
         .from("professionals")
@@ -204,36 +210,35 @@ export default function PerfilPublicoPage() {
         setSummary(sum as Resumen | null);
       }
 
-      const reviewFields =
-        "id, contact_attempt_id, overall_rating, price, reliability, quality, comment, created_at, profiles(full_name)";
-      const { data: b3Reviews, error: b3ReviewsError } = await supabase
-        .from("reviews")
-        .select(reviewFields)
-        .eq("professional_id", id)
-        .not("contact_attempt_id", "is", null)
-        .not("overall_rating", "is", null)
-        .is("removed_at", null)
-        .order("created_at", { ascending: false })
-        .limit(10);
-      if (b3ReviewsError) {
+      const [b3Result, legacyResult] = await Promise.all([
+        supabase.rpc("get_public_professional_reviews", {
+          p_professional_id: id,
+          p_contact_based: true,
+          p_limit: 10,
+        }),
+        supabase.rpc("get_public_professional_reviews", {
+          p_professional_id: id,
+          p_contact_based: false,
+          p_limit: 10,
+        }),
+      ]);
+      if (b3Result.error) {
         setReviewsError("No pudimos cargar las calificaciones recientes.");
       } else {
-        setReviews((b3Reviews ?? []) as unknown as Resena[]);
+        const rows = (b3Result.data ?? []) as unknown as Omit<Resena, "id">[];
+        setReviews(rows.map((review, index) => ({
+          ...review,
+          id: `public-review-${review.created_at}-${index}`,
+        })));
       }
-
-      const { data: historicalReviews, error: historicalReviewsError } =
-        await supabase
-          .from("reviews")
-          .select(reviewFields)
-          .eq("professional_id", id)
-          .is("contact_attempt_id", null)
-          .is("removed_at", null)
-          .order("created_at", { ascending: false })
-          .limit(10);
-      if (historicalReviewsError) {
+      if (legacyResult.error) {
         setLegacyReviewsError("No pudimos cargar las opiniones anteriores.");
       } else {
-        setLegacyReviews((historicalReviews ?? []) as unknown as Resena[]);
+        const rows = (legacyResult.data ?? []) as unknown as Omit<Resena, "id">[];
+        setLegacyReviews(rows.map((review, index) => ({
+          ...review,
+          id: `public-legacy-${review.created_at}-${index}`,
+        })));
       }
       setRatingsLoading(false);
 
@@ -248,6 +253,21 @@ export default function PerfilPublicoPage() {
       const user = userData.user;
       if (user) {
         setUserId(user.id);
+
+        try {
+          const { data: suspensionData, error: suspensionError } = await supabase.rpc(
+            "get_my_account_suspension_status"
+          );
+          setSuspensionStatus(
+            suspensionError || typeof suspensionData !== "boolean"
+              ? "error"
+              : suspensionData
+                ? "suspended"
+                : "active"
+          );
+        } catch {
+          setSuspensionStatus("error");
+        }
 
         const { data: certData } = await supabase
           .from("certificates")
@@ -276,17 +296,15 @@ export default function PerfilPublicoPage() {
         setContactReused(!!attemptData);
         setContactLookupLoading(false);
 
-        const { data: mine, error: mineError } = await supabase
-          .from("reviews")
-          .select(`${reviewFields}, edit_count`)
-          .eq("professional_id", id)
-          .eq("client_id", user.id)
-          .is("removed_at", null)
-          .maybeSingle();
+        const { data: mine, error: mineError } = await supabase.rpc(
+          "get_my_professional_review",
+          { p_professional_id: id }
+        );
         if (mineError) {
           setReviewLookupError("No pudimos comprobar si ya existe una reseña tuya.");
         } else {
-          setOwnReview(mine as unknown as Resena | null);
+          const ownRows = (mine ?? []) as unknown as Resena[];
+          setOwnReview(ownRows[0] ?? null);
         }
         setReviewLookupLoading(false);
 
@@ -299,6 +317,7 @@ export default function PerfilPublicoPage() {
         setReported(!!myReport);
       } else {
         setUserId(null);
+        setSuspensionStatus("error");
         setContactAttempt(null);
         setContactLookupLoading(false);
         setOwnReview(null);
@@ -308,6 +327,37 @@ export default function PerfilPublicoPage() {
     }
     load();
   }, [id, version]);
+
+  async function retrySuspensionCheck(): Promise<AccountSuspensionStatus> {
+    setSuspensionStatus("checking");
+    try {
+      const supabase = createClient();
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        setSuspensionStatus("error");
+        return "error";
+      }
+      const { data, error: statusError } = await supabase.rpc(
+        "get_my_account_suspension_status"
+      );
+      const { data: currentAuth } = await supabase.auth.getUser();
+      if (currentAuth.user?.id !== authData.user.id) {
+        setSuspensionStatus("error");
+        return "error";
+      }
+      const status: AccountSuspensionStatus =
+        statusError || typeof data !== "boolean"
+          ? "error"
+          : data
+            ? "suspended"
+            : "active";
+      setSuspensionStatus(status);
+      return status;
+    } catch {
+      setSuspensionStatus("error");
+      return "error";
+    }
+  }
 
   async function handleStartContact() {
     if (!userId || contactBusy) return;
@@ -612,15 +662,8 @@ export default function PerfilPublicoPage() {
 
   const loggedIn = userId !== null;
   const isOwner = pro !== null && pro.user_id === userId;
-  const visibleReviews =
-    ownReview?.contact_attempt_id && !reviews.some((review) => review.id === ownReview.id)
-      ? [ownReview, ...reviews]
-      : reviews;
-  const visibleLegacyReviews =
-    ownReview && ownReview.contact_attempt_id === null &&
-    !legacyReviews.some((review) => review.id === ownReview.id)
-      ? [ownReview, ...legacyReviews]
-      : legacyReviews;
+  const visibleReviews = reviews;
+  const visibleLegacyReviews = legacyReviews;
   const eligibilityLoading =
     ratingsLoading || contactLookupLoading || reviewLookupLoading;
   const eligibilityError =
@@ -803,7 +846,7 @@ export default function PerfilPublicoPage() {
                 </span>
               )}
               <span className="text-sm text-[#55666a]">
-                {review.profiles?.full_name?.split(" ")[0] ?? "Cliente"} ·{" "}
+                {review.full_name || "Cliente de OFIKO"} ·{" "}
                 {new Date(review.created_at).toLocaleDateString("es-AR")}
               </span>
             </div>
@@ -841,7 +884,7 @@ export default function PerfilPublicoPage() {
           <article key={review.id} className="mt-2 flex flex-col gap-3 border-t border-[#dde4e4] pt-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-medium">
-                {review.profiles?.full_name?.split(" ")[0] ?? "Cliente"} ·{" "}
+                {review.full_name || "Cliente de OFIKO"} ·{" "}
                 {new Date(review.created_at).toLocaleDateString("es-AR")}
               </p>
               <span className="rounded-full bg-[#edf1f1] px-2 py-1 text-xs text-[#55666a]">
@@ -922,7 +965,10 @@ export default function PerfilPublicoPage() {
                   comment: ownReview.comment,
                   created_at: ownReview.created_at,
                   edit_count: ownReview.edit_count,
+                  removed_at: ownReview.removed_at ?? null,
                 }}
+                suspensionStatus={suspensionStatus}
+                onRetrySuspensionCheck={retrySuspensionCheck}
                 onSaved={() => {
                   setEditSuccess("Tu calificación se actualizó correctamente.");
                   refreshProfileRatings();

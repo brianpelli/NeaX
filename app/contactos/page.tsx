@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import ProfessionalReviewEditor, {
+  type AccountSuspensionStatus,
   type EditableProfessionalReview,
 } from "@/components/reviews/ProfessionalReviewEditor";
 
@@ -28,9 +29,6 @@ type Contacto = Intento & {
   calificacion: EditableProfessionalReview | null;
 };
 
-const REVIEW_FIELDS =
-  "id, professional_id, contact_attempt_id, overall_rating, comment, created_at, edit_count";
-
 function fecha(value: string) {
   return new Date(value).toLocaleDateString("es-AR", {
     day: "numeric",
@@ -46,6 +44,7 @@ export default function ContactosPage() {
   const [error, setError] = useState<string | null>(null);
   const [profileWarning, setProfileWarning] = useState<string | null>(null);
   const [ratingWarning, setRatingWarning] = useState<string | null>(null);
+  const [suspensionStatus, setSuspensionStatus] = useState<AccountSuspensionStatus>("checking");
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -55,14 +54,34 @@ export default function ContactosPage() {
     setError(null);
     setProfileWarning(null);
     setRatingWarning(null);
+    setSuspensionStatus("checking");
 
-    const { data: attempts, error: attemptsError } = await supabase
-      .from("professional_contact_attempts")
-      .select("id, professional_id, attempted_at, confirmed_at")
-      .eq("client_id", user.id)
-      .order("attempted_at", { ascending: false });
+    const suspensionCheck = (async () => {
+      try {
+        const { data, error } = await supabase.rpc(
+          "get_my_account_suspension_status"
+        );
+        return error || typeof data !== "boolean"
+          ? "error" as const
+          : data
+            ? "suspended" as const
+            : "active" as const;
+      } catch {
+        return "error" as const;
+      }
+    })();
+    const [attemptsResult, checkedSuspensionStatus] = await Promise.all([
+      supabase
+        .from("professional_contact_attempts")
+        .select("id, professional_id, attempted_at, confirmed_at")
+        .eq("client_id", user.id)
+        .order("attempted_at", { ascending: false }),
+      suspensionCheck,
+    ]);
 
     if (!isCurrent()) return;
+    setSuspensionStatus(checkedSuspensionStatus);
+    const { data: attempts, error: attemptsError } = attemptsResult;
     if (attemptsError) {
       setItems([]);
       setError("No pudimos cargar tus contactos. Probá nuevamente.");
@@ -86,15 +105,10 @@ export default function ContactosPage() {
           "id, headline, categories(name), profiles!professionals_user_id_fkey(full_name)"
         )
         .in("id", professionalIds),
-      supabase
-        .from("reviews")
-        .select(REVIEW_FIELDS)
-        .eq("client_id", user.id)
-        .in("contact_attempt_id", attemptIds)
-        .not("overall_rating", "is", null)
-        .is("removed_at", null),
+      supabase.rpc("get_my_reviews_for_contacts", {
+        p_contact_attempt_ids: attemptIds,
+      }),
     ]);
-
     if (!isCurrent()) return;
     const byId = new Map(
       ((professionalResult.data ?? []) as unknown as Profesional[]).map((pro) => [pro.id, pro])
@@ -112,6 +126,7 @@ export default function ContactosPage() {
           comment: row.comment,
           created_at: row.created_at,
           edit_count: row.edit_count,
+          removed_at: row.removed_at,
         });
       }
     }
@@ -134,6 +149,37 @@ export default function ContactosPage() {
     }
     setLoading(false);
   }, []);
+
+  async function retrySuspensionCheck(): Promise<AccountSuspensionStatus> {
+    setSuspensionStatus("checking");
+    try {
+      const supabase = createClient();
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        setSuspensionStatus("error");
+        return "error";
+      }
+      const { data, error: statusError } = await supabase.rpc(
+        "get_my_account_suspension_status"
+      );
+      const { data: currentAuth } = await supabase.auth.getUser();
+      if (currentAuth.user?.id !== authData.user.id) {
+        setSuspensionStatus("error");
+        return "error";
+      }
+      const status: AccountSuspensionStatus =
+        statusError || typeof data !== "boolean"
+          ? "error"
+          : data
+            ? "suspended"
+            : "active";
+      setSuspensionStatus(status);
+      return status;
+    } catch {
+      setSuspensionStatus("error");
+      return "error";
+    }
+  }
 
   useEffect(() => {
     const supabase = createClient();
@@ -162,6 +208,7 @@ export default function ContactosPage() {
       setError(null);
       setProfileWarning(null);
       setRatingWarning(null);
+      setSuspensionStatus("checking");
       setActionError(null);
       if (!session?.user) {
         setLoading(true);
@@ -214,15 +261,11 @@ export default function ContactosPage() {
       return;
     }
 
-    const { data, error: reviewError } = await supabase
-      .from("reviews")
-      .select(REVIEW_FIELDS)
-      .eq("client_id", authData.user.id)
-      .eq("contact_attempt_id", attemptId)
-      .not("overall_rating", "is", null)
-      .is("removed_at", null)
-      .maybeSingle();
-
+    const { data, error: reviewError } = await supabase.rpc(
+      "get_my_reviews_for_contacts",
+      { p_contact_attempt_ids: [attemptId] }
+    );
+    const ownRow = (data ?? [])[0];
     if (reviewError) {
       setRatingWarning(
         "No pudimos actualizar tu calificación. La edición está deshabilitada hasta poder verificarla."
@@ -231,13 +274,14 @@ export default function ContactosPage() {
     }
 
     setRatingWarning(null);
-    const ownReview = data && data.overall_rating !== null
+    const ownReview = ownRow && ownRow.overall_rating !== null
       ? {
-          id: data.id,
-          overall_rating: data.overall_rating,
-          comment: data.comment,
-          created_at: data.created_at,
-          edit_count: data.edit_count,
+          id: ownRow.id,
+          overall_rating: ownRow.overall_rating,
+          comment: ownRow.comment,
+          created_at: ownRow.created_at,
+          edit_count: ownRow.edit_count,
+          removed_at: ownRow.removed_at,
         }
       : null;
     setItems((current) => current.map((item) =>
@@ -340,6 +384,8 @@ export default function ContactosPage() {
                     <h3 className="mb-2 font-bold">Mi calificación</h3>
                     <ProfessionalReviewEditor
                       review={item.calificacion}
+                      suspensionStatus={suspensionStatus}
+                      onRetrySuspensionCheck={retrySuspensionCheck}
                       onSaved={() => refreshOwnReview(item.id)}
                       onRefresh={() => refreshOwnReview(item.id)}
                     />

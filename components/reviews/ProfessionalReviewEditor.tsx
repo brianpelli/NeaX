@@ -9,7 +9,10 @@ export type EditableProfessionalReview = {
   comment: string | null;
   created_at: string;
   edit_count: number;
+  removed_at: string | null;
 };
+
+export type AccountSuspensionStatus = "checking" | "active" | "suspended" | "error";
 
 export function StarRatingInput({
   label,
@@ -51,10 +54,14 @@ export function StarRatingInput({
 
 export default function ProfessionalReviewEditor({
   review,
+  suspensionStatus,
+  onRetrySuspensionCheck,
   onSaved,
   onRefresh,
 }: {
   review: EditableProfessionalReview;
+  suspensionStatus: AccountSuspensionStatus;
+  onRetrySuspensionCheck: () => Promise<AccountSuspensionStatus>;
   onSaved?: () => void | Promise<void>;
   onRefresh?: () => void | Promise<void>;
 }) {
@@ -71,9 +78,16 @@ export default function ProfessionalReviewEditor({
     rating !== review.overall_rating ||
     (normalizedComment || null) !== (review.comment || null);
   const editsRemaining = Math.max(0, 3 - review.edit_count);
+  const suspensionDenied = suspensionStatus === "suspended";
 
   function beginEdit() {
-    if (review.edit_count >= 3 || editBlocked || saving) return;
+    if (
+      suspensionStatus !== "active" ||
+      review.removed_at ||
+      review.edit_count >= 3 ||
+      editBlocked ||
+      saving
+    ) return;
     setRating(review.overall_rating);
     setComment(review.comment ?? "");
     setError(null);
@@ -102,6 +116,7 @@ export default function ProfessionalReviewEditor({
     if (
       saveLock.current ||
       saving ||
+      suspensionStatus !== "active" ||
       editBlocked ||
       review.edit_count >= 3 ||
       !editing
@@ -141,6 +156,17 @@ export default function ProfessionalReviewEditor({
           setError("Esta calificación alcanzó el máximo de tres ediciones.");
           setEditing(false);
           setEditBlocked(true);
+          await refreshAfterRejection();
+        } else if (
+          rpcError.code === "42501" &&
+          rpcError.message === "Tu cuenta no puede editar calificaciones"
+        ) {
+          setError("No podés modificar calificaciones mientras tu cuenta esté suspendida.");
+          setEditing(false);
+          const refreshedStatus = await onRetrySuspensionCheck();
+          if (refreshedStatus === "active" || refreshedStatus === "suspended") {
+            setError(null);
+          }
           await refreshAfterRejection();
         } else if (rpcError.code === "42501") {
           setError("No se pudo editar. La calificación puede no estar disponible para cambios.");
@@ -203,9 +229,32 @@ export default function ProfessionalReviewEditor({
         </p>
       )}
       {success && <p role="status" className="text-sm font-medium text-[#0f5c5c]">{success}</p>}
-      {review.edit_count >= 3 ? (
+      {suspensionDenied ? (
         <p role="status" className="text-sm text-[#55666a]">
-          Esta calificación ya alcanzó el máximo de tres ediciones.
+          No podés modificar calificaciones mientras tu cuenta esté suspendida.
+        </p>
+      ) : suspensionStatus === "checking" ? (
+        <p role="status" className="text-sm text-[#55666a]">
+          Verificando si tu cuenta puede editar calificaciones...
+        </p>
+      ) : suspensionStatus === "error" ? (
+        <div className="flex flex-col items-start gap-2">
+          <p role="alert" className="text-sm text-red-700">
+            No pudimos verificar el permiso de edición. La edición permanece deshabilitada.
+          </p>
+          <button
+            type="button"
+            onClick={() => void onRetrySuspensionCheck()}
+            className="min-h-11 rounded-xl border border-[#0f5c5c] px-4 font-bold text-[#0f5c5c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5c5c]"
+          >
+            Reintentar verificación
+          </button>
+        </div>
+      ) : review.removed_at || review.edit_count >= 3 ? (
+        <p role="status" className="text-sm text-[#55666a]">
+          {review.removed_at
+            ? "Esta calificación fue retirada y no se puede editar."
+            : "Esta calificación ya alcanzó el máximo de tres ediciones."}
         </p>
       ) : (
         <>
@@ -213,7 +262,7 @@ export default function ProfessionalReviewEditor({
             <button
               type="button"
               onClick={beginEdit}
-              disabled={editBlocked || saving}
+              disabled={review.removed_at !== null || editBlocked || saving}
               className="min-h-11 self-start rounded-xl border border-[#0f5c5c] px-4 font-bold text-[#0f5c5c] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0f5c5c] disabled:opacity-60"
             >
               Editar mi calificación
