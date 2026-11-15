@@ -2,12 +2,14 @@
 param()
 
 $ErrorActionPreference = 'Stop'
-$allowedContainer = 'supabase_db_ofiko-local'
-$expectedProjectId = 'ofiko-local'
-$migrationVersion = '20261114002851'
+$allowedContainer = 'supabase_db_ofiko-b3-test'
+$expectedProjectId = 'ofiko-b3-test'
+$migrationVersion = '20261114224100'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-$configPath = Join-Path $repoRoot 'supabase\config.toml'
+$instanceRoot = Join-Path $env:TEMP 'ofiko-b3-test'
+$configPath = Join-Path $instanceRoot 'supabase\config.toml'
 $sqlPath = Join-Path $PSScriptRoot 'transactional.sql'
+$securitySqlPath = Join-Path $PSScriptRoot 'security.sql'
 
 if (-not (Test-Path -LiteralPath $configPath)) {
   throw 'Supabase config.toml was not found; refusing to run.'
@@ -16,11 +18,17 @@ if (-not (Test-Path -LiteralPath $sqlPath)) {
   throw 'transactional.sql was not found; refusing to run.'
 }
 
-$configText = Get-Content -Raw -LiteralPath $configPath
-if ($configText -notmatch '(?m)^project_id\s*=\s*"ofiko-local"\s*$') {
-  throw "Project config is not explicitly $expectedProjectId; refusing to run."
+if (-not (Test-Path -LiteralPath $securitySqlPath)) {
+  throw 'security.sql was not found; refusing to run.'
 }
 
+$configText = Get-Content -Raw -LiteralPath $configPath
+if ($configText -notmatch '(?m)^project_id\s*=\s*"ofiko-b3-test"\s*$') {
+  throw 'Disposable project config mismatch; refusing to run.'
+}
+if (-not (Test-Path -LiteralPath (Join-Path $instanceRoot 'supabase\migrations\20261114224100_b3_review_moderation.sql'))) {
+  throw 'Disposable migration copy missing; refusing to run.'
+}
 $docker = Get-Command docker -ErrorAction SilentlyContinue
 if (-not $docker -or $docker.CommandType -ne 'Application') {
   throw 'Docker CLI is unavailable; no tests were run.'
@@ -195,6 +203,8 @@ $preflightSql = @"
 SELECT CASE
   WHEN current_database() <> 'postgres' THEN 'wrong_database'
   WHEN to_regclass('public.review_edit_history') IS NULL THEN 'missing_b3_schema'
+  WHEN to_regclass('public.account_suspensions') IS NULL THEN 'missing_account_suspension'
+  WHEN to_regclass('public.review_moderation_audit') IS NULL THEN 'missing_moderation_audit'
   WHEN NOT EXISTS (
     SELECT 1 FROM supabase_migrations.schema_migrations
     WHERE version = '$migrationVersion'
@@ -217,7 +227,9 @@ SELECT pg_catalog.concat_ws('|',
   (SELECT count(*) FROM public.hirings),
   (SELECT count(*) FROM public.reviews),
   (SELECT count(*) FROM public.review_edit_history),
-  (SELECT count(*) FROM public.admins)
+  (SELECT count(*) FROM public.admins),
+  (SELECT count(*) FROM public.account_suspensions),
+  (SELECT count(*) FROM public.review_moderation_audit)
 )
 '@
 $before = Invoke-LocalPsql $countsSql
@@ -226,6 +238,8 @@ $sql = Get-Content -Raw -LiteralPath $sqlPath
 
 try {
   Invoke-LocalPsql $sql -FromStdin -ShowOutput
+  $securitySql = Get-Content -Raw -LiteralPath $securitySqlPath
+  Invoke-LocalPsql $securitySql -FromStdin -ShowOutput
 } catch {
   $testError = $_
 } finally {
@@ -240,4 +254,4 @@ if ($testError) {
 }
 
 Write-Host 'Persistent row counts match before and after the transaction suite.'
-Write-Host 'Concurrency tests were not included; see README.md for the safe isolation requirement.'
+Write-Host 'Concurrency tests are run separately with run-concurrency.ps1.'

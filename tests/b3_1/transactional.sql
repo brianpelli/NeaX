@@ -36,7 +36,7 @@ BEGIN
      OR v_types IS DISTINCT FROM ARRAY[
        'uuid', 'bigint', 'numeric', 'numeric', 'numeric', 'numeric'
      ]::text[]
-     OR NOT v_security_invoker THEN
+     OR v_security_invoker THEN
     RAISE EXCEPTION 'FALLIDO B3-E00: professional_ratings signature/options';
   END IF;
 
@@ -67,11 +67,11 @@ BEGIN
        'uuid', 'text', 'boolean', 'bigint', 'text', 'text', 'text', 'text',
        'bigint', 'numeric', 'numeric', 'text'
      ]::text[]
-     OR NOT v_security_invoker THEN
+     OR v_security_invoker THEN
     RAISE EXCEPTION 'FALLIDO B3-E00: professional_search signature/options';
   END IF;
 
-  RAISE NOTICE 'APROBADO B3-E00 view signatures, order, types and security_invoker';
+  RAISE NOTICE 'APROBADO B3-E00 view signatures, order, types and filtered security-definer views';
 END;
 $test$;
 
@@ -117,12 +117,12 @@ FROM (VALUES
   ('admin_user', 'admin')
 ) AS f(user_key, label);
 
-INSERT INTO public.professionals (id, user_id, is_suspended)
+INSERT INTO public.professionals (id, user_id, category_id, is_suspended)
 VALUES
-  (current_setting('b3test.pro_a')::uuid, current_setting('b3test.pro_user_a')::uuid, false),
-  (current_setting('b3test.pro_b')::uuid, current_setting('b3test.pro_user_b')::uuid, false),
-  (current_setting('b3test.pro_c')::uuid, current_setting('b3test.pro_user_c')::uuid, false),
-  (current_setting('b3test.pro_self')::uuid, current_setting('b3test.client_a')::uuid, false);
+  (current_setting('b3test.pro_a')::uuid, current_setting('b3test.pro_user_a')::uuid, 1, false),
+  (current_setting('b3test.pro_b')::uuid, current_setting('b3test.pro_user_b')::uuid, 1, false),
+  (current_setting('b3test.pro_c')::uuid, current_setting('b3test.pro_user_c')::uuid, 1, false),
+  (current_setting('b3test.pro_self')::uuid, current_setting('b3test.client_a')::uuid, 1, false);
 
 INSERT INTO public.admins (user_id)
 VALUES (current_setting('b3test.admin_user')::uuid);
@@ -285,12 +285,8 @@ SELECT set_config(
 DO $test$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM public.reviews
-    WHERE id = current_setting('b3test.review_a')::uuid
-      AND client_id = auth.uid()
-      AND professional_id = current_setting('b3test.pro_a')::uuid
-      AND overall_rating = 4
-      AND edit_count = 0
+    SELECT 1 FROM public.get_my_professional_review(current_setting('b3test.pro_a')::uuid)
+    WHERE id = current_setting('b3test.review_a')::uuid AND overall_rating = 4 AND edit_count = 0
   ) THEN
     RAISE EXCEPTION 'FALLIDO B3-P01: initial publication state';
   END IF;
@@ -360,9 +356,8 @@ SET LOCAL ROLE anon;
 DO $test$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM public.reviews
-    WHERE id = current_setting('b3test.review_a')::uuid
-      AND removed_at IS NULL
+    SELECT 1 FROM public.get_public_professional_reviews(current_setting('b3test.pro_a')::uuid, true, 10)
+    WHERE full_name = 'Synthetic B3.1 test' AND overall_rating = 4
   ) THEN
     RAISE EXCEPTION 'FALLIDO B3-P03: public cannot read an active review';
   END IF;
@@ -490,10 +485,10 @@ SELECT public.edit_professional_review(
 
 DO $test$
 BEGIN
-  IF (SELECT edit_count FROM public.reviews
-      WHERE id = current_setting('b3test.review_a')::uuid) <> 3
-     OR (SELECT overall_rating FROM public.reviews
-         WHERE id = current_setting('b3test.review_a')::uuid) <> 5 THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM public.get_my_professional_review(current_setting('b3test.pro_a')::uuid)
+    WHERE id = current_setting('b3test.review_a')::uuid AND edit_count = 3 AND overall_rating = 5
+  ) THEN
     RAISE EXCEPTION 'FALLIDO B3-A10: review edit_count/rating state';
   END IF;
   RAISE NOTICE 'APROBADO B3-A10 review edit_count and rating updated';
@@ -581,9 +576,8 @@ SELECT public.admin_remove_professional_review(
 DO $test$
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM public.reviews
-    WHERE id = current_setting('b3test.review_a')::uuid
-      AND removed_at IS NOT NULL
+    SELECT 1 FROM public.admin_list_professional_reviews('removed', 20, 0)
+    WHERE review_id = current_setting('b3test.review_a')::uuid
   ) THEN
     RAISE EXCEPTION 'FALLIDO B3-B02: admin removal did not hide the review';
   END IF;
@@ -606,70 +600,86 @@ BEGIN
   RAISE NOTICE 'APROBADO B3-B04 removed review excluded from reputation';
 END;
 $test$;
+SELECT public.admin_restore_professional_review(current_setting('b3test.review_a')::uuid);
+DO $test$
+BEGIN
+  IF (SELECT total_reviews FROM public.professional_search WHERE id = current_setting('b3test.pro_a')::uuid) <> 1 THEN
+    RAISE EXCEPTION 'FALLIDO B3-R01: restore did not restore reputation';
+  END IF;
+  IF (SELECT count(*) FROM public.admin_list_review_moderation_audit(current_setting('b3test.review_a')::uuid, 20, 0)) <> 2 THEN
+    RAISE EXCEPTION 'FALLIDO B3-R02: remove/restore audit events missing';
+  END IF;
+  BEGIN
+    PERFORM public.admin_restore_professional_review(current_setting('b3test.review_a')::uuid);
+    RAISE EXCEPTION 'FALLIDO B3-R03: duplicate restoration succeeded';
+  EXCEPTION WHEN SQLSTATE '23514' THEN NULL;
+  END;
+  RAISE NOTICE 'APROBADO B3-R01 restore returns the review to reputation';
+  RAISE NOTICE 'APROBADO B3-R02 removal and restoration are audited';
+  RAISE NOTICE 'APROBADO B3-R03 duplicate restoration rejected';
+END;
+$test$;
+SELECT public.admin_remove_professional_review(current_setting('b3test.review_a')::uuid);
 
 SET LOCAL ROLE anon;
 DO $test$
+DECLARE v_rows integer;
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.reviews
-    WHERE id = current_setting('b3test.review_a')::uuid
-  ) THEN
-    RAISE EXCEPTION 'FALLIDO B3-B05: anon can read a removed review';
+  IF pg_catalog.has_table_privilege('anon', 'public.reviews', 'SELECT') THEN
+    RAISE EXCEPTION 'FALLIDO B3-B05: anon has direct SELECT on reviews';
   END IF;
-
+  SELECT count(*) INTO v_rows FROM public.get_public_professional_reviews(current_setting('b3test.pro_a')::uuid, true, 10);
+  IF v_rows <> 0 THEN RAISE EXCEPTION 'FALLIDO B3-B05: removed review is public'; END IF;
   BEGIN
-    PERFORM 1 FROM public.review_edit_history LIMIT 1;
-    RAISE EXCEPTION 'FALLIDO B3-B06: anon can read audit history';
-  EXCEPTION WHEN SQLSTATE '42501' THEN
-    RAISE NOTICE 'APROBADO B3-B05 anon cannot read removed review';
-    RAISE NOTICE 'APROBADO B3-B06 anon cannot read audit history';
+    PERFORM 1 FROM public.reviews LIMIT 1;
+    RAISE EXCEPTION 'FALLIDO B3-B05: direct query succeeded';
+  EXCEPTION WHEN SQLSTATE '42501' THEN NULL;
   END;
+  IF pg_catalog.has_table_privilege('anon', 'public.review_moderation_audit', 'SELECT') THEN
+    RAISE EXCEPTION 'FALLIDO B3-B06: anon can read moderation audit';
+  END IF;
+  RAISE NOTICE 'APROBADO B3-B05 anon has no direct review access and removed review is hidden';
+  RAISE NOTICE 'APROBADO B3-B06 anon cannot read moderation audit';
 END;
 $test$;
-
 RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', current_setting('b3test.client_b'), true);
 DO $test$
+DECLARE v_rows integer;
 BEGIN
-  IF EXISTS (
-    SELECT 1 FROM public.reviews
-    WHERE id = current_setting('b3test.review_a')::uuid
-  ) THEN
-    RAISE EXCEPTION 'FALLIDO B3-B07: ordinary user can read removed review';
-  END IF;
-  IF EXISTS (
-    SELECT 1 FROM public.review_edit_history
-    WHERE review_ref = current_setting('b3test.review_a')::uuid
-  ) THEN
+  IF pg_catalog.has_table_privilege('authenticated', 'public.reviews', 'SELECT') THEN RAISE EXCEPTION 'FALLIDO B3-B07: direct SELECT granted'; END IF;
+  SELECT count(*) INTO v_rows FROM public.get_my_professional_review(current_setting('b3test.pro_a')::uuid);
+  IF v_rows <> 0 THEN RAISE EXCEPTION 'FALLIDO B3-B07: another user read a private review'; END IF;
+  BEGIN
+    PERFORM 1 FROM public.reviews LIMIT 1;
+    RAISE EXCEPTION 'FALLIDO B3-B07: direct query succeeded';
+  EXCEPTION WHEN SQLSTATE '42501' THEN NULL;
+  END;
+  IF EXISTS (SELECT 1 FROM public.review_edit_history WHERE review_ref = current_setting('b3test.review_a')::uuid)
+     OR pg_catalog.has_table_privilege('authenticated', 'public.review_moderation_audit', 'SELECT') THEN
     RAISE EXCEPTION 'FALLIDO B3-B08: ordinary user can read audit history';
   END IF;
-  RAISE NOTICE 'APROBADO B3-B07 ordinary user cannot read removed review';
+  RAISE NOTICE 'APROBADO B3-B07 ordinary user has no direct/private read';
   RAISE NOTICE 'APROBADO B3-B08 ordinary user cannot read audit history';
 END;
 $test$;
-
 RESET ROLE;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', current_setting('b3test.admin_user'), true);
 DO $test$
+DECLARE v_rows integer;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM public.reviews
-    WHERE id = current_setting('b3test.review_a')::uuid
-      AND removed_at IS NOT NULL
-  ) THEN
-    RAISE EXCEPTION 'FALLIDO B3-B09: admin cannot inspect removed review';
-  END IF;
-  IF (SELECT count(*) FROM public.review_edit_history
-      WHERE review_ref = current_setting('b3test.review_a')::uuid) <> 3 THEN
+  SELECT count(*) INTO v_rows FROM public.admin_list_professional_reviews('removed', 20, 0)
+  WHERE review_id = current_setting('b3test.review_a')::uuid;
+  IF v_rows <> 1 THEN RAISE EXCEPTION 'FALLIDO B3-B09: admin list missing removed review'; END IF;
+  IF (SELECT count(*) FROM public.review_edit_history WHERE review_ref = current_setting('b3test.review_a')::uuid) <> 3 THEN
     RAISE EXCEPTION 'FALLIDO B3-B10: admin cannot inspect edit history';
   END IF;
-  RAISE NOTICE 'APROBADO B3-B09 admin can inspect removed review';
+  RAISE NOTICE 'APROBADO B3-B09 admin can inspect removed review through RPC';
   RAISE NOTICE 'APROBADO B3-B10 admin can inspect edit history';
 END;
 $test$;
-
 RESET ROLE;
 DELETE FROM public.reviews
 WHERE id = current_setting('b3test.review_a')::uuid
