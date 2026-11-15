@@ -56,7 +56,7 @@ export default function AdminPage() {
   }, [estado]);
 
   useEffect(() => {
-    if (allowed) load();
+    if (allowed) void Promise.resolve().then(load);
   }, [allowed, load]);
 
   async function handleView(path: string) {
@@ -105,6 +105,12 @@ export default function AdminPage() {
   return (
     <main className={mainClass}>
       <h1 className="text-3xl font-bold">Verificación de certificados</h1>
+      <Link
+        href="/admin/calificaciones"
+        className="w-fit text-sm font-bold text-[#0f5c5c] underline"
+      >
+        Moderar calificaciones
+      </Link>
       <Link
         href="/admin/denuncias"
         className="w-fit text-sm font-bold text-[#0f5c5c] underline"
